@@ -13,6 +13,8 @@ USER_FIELDS = ("email", "first_name", "last_name", "phone", "ext", "picture", "i
 
 
 async def _handle_user_created(session: AsyncSession, data: dict):
+    if not data.get("organization_id"):
+        return
     existing = await session.execute(select(UserReplica).where(UserReplica.id == UUID(data["id"])))
     if existing.scalar_one_or_none():
         return
@@ -91,7 +93,7 @@ async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url:
         count = 0
         for u in users:
             uid = UUID(u["id"])
-            if uid in existing_ids:
+            if uid in existing_ids or not u.get("organization_id"):
                 continue
             session.add(
                 UserReplica(
