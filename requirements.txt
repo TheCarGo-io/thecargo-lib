@@ -9,3 +9,4 @@ redis==7.4.0
 aio-pika==9.6.2
 minio==7.2.20
 python-multipart==0.0.24
+fastapi-pagination==0.15.12

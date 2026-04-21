@@ -90,6 +90,13 @@ class TenantRepository:
         result = await self.db.execute(self._base_query().where(self.model.id == id))
         return result.scalar_one_or_none()
 
+    def build_query(self, order_by: Any = None, options: list | None = None) -> Select:
+        query = self._base_query()
+        if options:
+            for opt in options:
+                query = query.options(opt)
+        return query.order_by(order_by if order_by is not None else self.model.created_at.desc())
+
     async def list(
         self,
         offset: int = 0,
