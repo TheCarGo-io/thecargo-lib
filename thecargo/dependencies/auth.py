@@ -21,6 +21,10 @@ class TokenPayload:
     permissions: dict
     # {resource: {action: tuple(stages) or None}}. None = no restriction (all stages).
     stage_filters: dict = field(default_factory=dict)
+    # Snapshot of role.permission_version at the time the access token was
+    # issued. Compared against the live value in Redis on every request so a
+    # stale token can be rejected with 401 token_stale.
+    role_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -95,7 +99,7 @@ async def get_current_user(
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
-    return TokenPayload(
+    user = TokenPayload(
         user_id=UUID(payload["user_id"]),
         org_id=UUID(payload["org_id"]),
         role_id=UUID(payload["role_id"]) if payload.get("role_id") else None,
@@ -103,7 +107,43 @@ async def get_current_user(
         team_id=UUID(payload["team_id"]) if payload.get("team_id") else None,
         permissions=_decode_permissions(payload.get("p", {})),
         stage_filters=_decode_stage_filters(payload.get("ps", {})),
+        role_version=payload.get("rv", 0),
     )
+
+    # Fail-fast if the role's permissions changed since this token was issued.
+    # Platform superusers bypass the check (they keep a stable role_version=0).
+    if user.role_id and not user.is_superuser:
+        await _enforce_role_version(user)
+
+    return user
+
+
+def role_version_key(role_id) -> str:
+    return f"role:{role_id}:version"
+
+
+async def _enforce_role_version(user: "TokenPayload") -> None:
+    """JWT's role_version must match whatever Redis currently holds.
+
+    Read-only check — we never populate on miss here. The admin service
+    writes the version to Redis when a role's permissions change; cold
+    cache means "we don't know" so we trust the JWT (fail-open). Access
+    tokens already have a short TTL, so the blast radius is bounded.
+    """
+    from thecargo.cache import cache_get
+
+    cached = await cache_get(role_version_key(user.role_id))
+    if cached is None:
+        return
+
+    if int(cached) != int(user.role_version):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "token_stale",
+                "message": "Role permissions changed; please refresh your session",
+            },
+        )
 
 
 async def get_org_id(user: TokenPayload = Depends(get_current_user)) -> UUID:
