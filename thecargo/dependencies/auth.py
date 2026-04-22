@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 import jwt
@@ -19,6 +19,8 @@ class TokenPayload:
     is_superuser: bool
     team_id: UUID | None
     permissions: dict
+    # {resource: {action: tuple(stages) or None}}. None = no restriction (all stages).
+    stage_filters: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class Scope:
     scope: str
     user_id: UUID
     team_id: UUID | None = None
+    # Tuple of allowed stages (e.g. ("lead",)). None = no restriction / resource not stage-filterable.
+    allowed_stages: tuple[str, ...] | None = None
 
     @property
     def is_all(self) -> bool:
@@ -39,18 +43,47 @@ class Scope:
     def is_team(self) -> bool:
         return self.scope == "team"
 
+    def check_stage(self, stage: str | None) -> None:
+        """Raise 403 if a specific stage is requested but not permitted by this scope.
+
+        Call this at the top of stage-aware endpoints (e.g. list by stage, create in stage).
+        When stage is None (cross-stage op) and allowed_stages is set, also raises — a
+        stage-restricted role cannot perform cross-stage operations.
+        """
+        if self.allowed_stages is None:
+            return
+        if stage is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Stage-restricted role cannot perform cross-stage operation (allowed: {list(self.allowed_stages)})",
+            )
+        if stage not in self.allowed_stages:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Stage '{stage}' not permitted by this role (allowed: {list(self.allowed_stages)})",
+            )
+
 
 def _decode_permissions(raw: dict) -> dict:
     result = {}
     for resource_key, scope_str in raw.items():
-        result[resource_key] = {
-            ACTIONS[i]: SCOPE_MAP.get(ch) for i, ch in enumerate(scope_str[:4])
-        }
+        result[resource_key] = {ACTIONS[i]: SCOPE_MAP.get(ch) for i, ch in enumerate(scope_str[:4])}
+    return result
+
+
+def _decode_stage_filters(raw: dict) -> dict:
+    """Convert JWT "ps" payload into {resource: {action: tuple(stages) or None}}."""
+    result: dict = {}
+    for resource, actions in (raw or {}).items():
+        result[resource] = {}
+        for action, stages in (actions or {}).items():
+            result[resource][action] = tuple(stages) if stages else None
     return result
 
 
 def _get_secret_key():
     from thecargo.dependencies._settings import get_jwt_secret
+
     return get_jwt_secret()
 
 
@@ -69,6 +102,7 @@ async def get_current_user(
         is_superuser=payload.get("is_superuser", False),
         team_id=UUID(payload["team_id"]) if payload.get("team_id") else None,
         permissions=_decode_permissions(payload.get("p", {})),
+        stage_filters=_decode_stage_filters(payload.get("ps", {})),
     )
 
 
@@ -91,4 +125,38 @@ class Requires:
         if scope is None:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Permission denied")
 
-        return Scope(scope=scope, user_id=user.user_id, team_id=user.team_id)
+        allowed_stages = user.stage_filters.get(self.resource, {}).get(self.action)
+
+        return Scope(
+            scope=scope,
+            user_id=user.user_id,
+            team_id=user.team_id,
+            allowed_stages=allowed_stages,
+        )
+
+
+def check_stage_permission(user: TokenPayload, stage: str, action: str) -> Scope:
+    """Resolve scope for a shipment operation on a specific stage.
+
+    Maps stage → resource (lead | quote | order) and returns the Scope, raising
+    403 if the user lacks permission. Use this in shipment endpoints that need
+    stage-aware authorization (list, create, update, delete, convert).
+
+    Platform superusers bypass all checks.
+    """
+    if user.is_superuser:
+        return Scope(scope="all", user_id=user.user_id, team_id=user.team_id)
+
+    if stage not in ("lead", "quote", "order"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid stage '{stage}'")
+
+    perm = user.permissions.get(stage, {})
+    scope = perm.get(action)
+
+    if scope is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"No '{action}' permission for stage '{stage}'",
+        )
+
+    return Scope(scope=scope, user_id=user.user_id, team_id=user.team_id)
