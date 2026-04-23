@@ -86,9 +86,12 @@ class TenantRepository:
             query = query.where(self.model.deleted_at.is_(None))
         return query
 
-    async def get_by_id(self, id: UUID):
+    async def get(self, id: UUID):
         result = await self.db.execute(self._base_query().where(self.model.id == id))
         return result.scalar_one_or_none()
+
+    # Backward-compat alias. Prefer :meth:`get` in new code.
+    get_by_id = get
 
     def build_query(self, order_by: Any = None, options: list | None = None) -> Select:
         query = self._base_query()
