@@ -55,6 +55,19 @@ MANAGER: Final[dict[str, str]] = {
     "lead_parsing.view": "all",
     "lead_parsing.create": "all",
     "lead_parsing.update": "all",
+    **{
+        f"{r}.{a}": ("all" if a != "delete" else "own")
+        for r in (
+            "toolbar_note",
+            "toolbar_task",
+            "toolbar_file",
+            "toolbar_contract",
+            "toolbar_sms",
+            "toolbar_email",
+            "toolbar_payment",
+        )
+        for a in ("view", "create", "update", "delete")
+    },
 }
 
 SALES_AGENT: Final[dict[str, str]] = {
@@ -71,6 +84,31 @@ SALES_AGENT: Final[dict[str, str]] = {
     "goal.view": "own",
     "target.view": "own",
     "template.view": "all",
+    **{
+        f"{r}.view": "own"
+        for r in (
+            "toolbar_note",
+            "toolbar_task",
+            "toolbar_file",
+            "toolbar_contract",
+            "toolbar_sms",
+            "toolbar_email",
+            "toolbar_payment",
+        )
+    },
+    **{
+        f"{r}.{a}": ("all" if a == "create" else "own")
+        for r in (
+            "toolbar_note",
+            "toolbar_task",
+            "toolbar_file",
+            "toolbar_contract",
+            "toolbar_sms",
+            "toolbar_email",
+            "toolbar_payment",
+        )
+        for a in ("create", "update", "delete")
+    },
 }
 
 TEMPLATES: Final[dict[str, dict[str, str]]] = {
