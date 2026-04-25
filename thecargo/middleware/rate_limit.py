@@ -174,7 +174,6 @@ class _RateLimitExceeded(Exception):
 
 
 def _register_rate_limit_handler(app):
-    from fastapi import FastAPI
     from fastapi.responses import JSONResponse as FastAPIJSONResponse
 
     @app.exception_handler(_RateLimitExceeded)

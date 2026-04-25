@@ -1,5 +1,5 @@
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID
 
 
@@ -9,6 +9,8 @@ class AuditContext:
     actor_email: str | None = None
     organization_id: UUID | None = None
     ip_address: str | None = None
+    user_agent: str | None = None
+    request_id: UUID | None = None
 
 
 _audit_context: ContextVar[AuditContext] = ContextVar("audit_context", default=AuditContext())

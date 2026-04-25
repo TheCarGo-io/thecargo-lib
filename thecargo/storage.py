@@ -31,15 +31,22 @@ def _retry(func: Any) -> Any:
                     delay = RETRY_DELAY * attempt
                     logger.warning(
                         "MinIO %s failed (attempt %d/%d): %s. Retrying in %.1fs...",
-                        func.__name__, attempt, MAX_RETRIES, e, delay,
+                        func.__name__,
+                        attempt,
+                        MAX_RETRIES,
+                        e,
+                        delay,
                     )
                     time.sleep(delay)
         logger.error("MinIO %s failed after %d attempts: %s", func.__name__, MAX_RETRIES, last_exc)
         raise last_exc
+
     return wrapper
 
 
-def init_storage(endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False, public_url: str = ""):
+def init_storage(
+    endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False, public_url: str = ""
+):
     global _client, _bucket, _public_url
     try:
         _client = Minio(endpoint=endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
@@ -93,6 +100,38 @@ def upload_file(path: str, file_path: str, content_type: str = "application/octe
 
 def get_public_url(path: str) -> str:
     return f"{_public_url}/{_bucket}/{path}"
+
+
+def object_path_from_url(url: str) -> str:
+    """Strip the public-URL prefix from a stored file URL.
+
+    ``shipment_files.url`` rows hold ``{public_url}/{bucket}/{path}``.
+    For presigning we need just ``{path}``.
+    """
+    if not url:
+        return ""
+    if _public_url and url.startswith(_public_url):
+        url = url[len(_public_url):]
+    url = url.lstrip("/")
+    if _bucket and url.startswith(f"{_bucket}/"):
+        url = url[len(_bucket) + 1:]
+    return url
+
+
+@_retry
+def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
+    """Time-limited GET URL for a private-bucket object.
+
+    The URL embeds an HMAC signature so the browser can fetch the
+    bytes directly without server-side proxying. Default 10-minute
+    expiry covers a click-to-download flow without leaving long-lived
+    tokens in browser history.
+    """
+    if _client is None:
+        raise RuntimeError("MinIO not initialized")
+    from datetime import timedelta
+
+    return _client.presigned_get_object(_bucket, path, expires=timedelta(seconds=expires_seconds))
 
 
 @_retry

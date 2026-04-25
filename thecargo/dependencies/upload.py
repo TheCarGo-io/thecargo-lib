@@ -1,11 +1,15 @@
 from uuid import uuid4
 
-from thecargo.utils.timezone import now_ny
-
 from fastapi import HTTPException, UploadFile
 
+from thecargo.utils.timezone import now_ny
+
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-ALLOWED_DOC_TYPES = {"application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+ALLOWED_DOC_TYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 ALLOWED_TYPES = ALLOWED_IMAGE_TYPES | ALLOWED_DOC_TYPES
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
@@ -29,6 +33,7 @@ async def save_upload(file: UploadFile, prefix: str = "uploads", allowed_types: 
         raise HTTPException(400, f"File too large: max {MAX_FILE_SIZE // 1024 // 1024}MB")
 
     from thecargo.storage import upload_bytes
+
     path = _generate_path(prefix, file.filename)
     return upload_bytes(path, data, content_type=file.content_type or "application/octet-stream")
 
