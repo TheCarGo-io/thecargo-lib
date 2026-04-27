@@ -47,6 +47,7 @@ MANAGER: Final[dict[str, str]] = {
         for a in ("create", "update")
     },
     **{f"{r}.{a}": "all" for r in ("automation", "distribution", "template") for a in ("view", "create", "update")},
+    **{f"tag.{a}": "all" for a in ("view", "create", "update", "delete")},
     "team.view": "all",
     "user.view": "all",
     "role.view": "all",
@@ -77,6 +78,8 @@ SALES_AGENT: Final[dict[str, str]] = {
     **{f"{r}.update": "own" for r in ("lead", "quote", "customer", "task")},
     "carrier.view": "all",
     "provider.view": "all",
+    "tag.view": "all",
+    "tag.create": "all",
     "notification.view": "own",
     "conversation.view": "own",
     "conversation.create": "all",

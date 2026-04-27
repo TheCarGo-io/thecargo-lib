@@ -75,6 +75,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "dashboard",
     "insight",
     "shipment_reason",
+    "tag",
     "toolbar",
     "toolbar_note",
     "toolbar_task",
