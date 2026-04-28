@@ -30,9 +30,28 @@ logger = logging.getLogger(__name__)
 
 _SERVICE_NAME = os.environ.get("SERVICE_NAME")
 
-_SENSITIVE_FIELDS = frozenset({"password_hash", "token", "secret", "api_key"})
+_SENSITIVE_EXACT = frozenset({"password_hash", "password", "token", "secret", "api_key"})
+_SENSITIVE_SUFFIXES = (
+    "_password",
+    "_password_hash",
+    "_token",
+    "_secret",
+    "_api_key",
+)
 _MAX_VALUE_LEN = 5000
 _PENDING_KEY = "_thecargo_audit_pending"
+
+
+def _is_sensitive(column_key: str) -> bool:
+    """Return True if a column should be redacted from audit snapshots.
+
+    Matches both the curated exact-name list and a suffix list so
+    namespaced credentials (``client_secret``, ``cd_client_secret``,
+    ``stripe_api_key`` …) are caught without each model author
+    having to opt in. Add new patterns here, never per-model — audit
+    redaction is one of those things you want enforced centrally.
+    """
+    return column_key in _SENSITIVE_EXACT or column_key.endswith(_SENSITIVE_SUFFIXES)
 
 
 class Auditable:
@@ -82,7 +101,7 @@ def _snapshot(obj: "Auditable") -> dict[str, Any]:
     ignore = obj.__audit_ignore__
     out: dict[str, Any] = {}
     for col in obj.__table__.columns:
-        if col.key in unloaded or col.key in ignore or col.key in _SENSITIVE_FIELDS:
+        if col.key in unloaded or col.key in ignore or _is_sensitive(col.key):
             continue
         out[col.key] = _jsonify(getattr(obj, col.key, None))
     return out
@@ -95,7 +114,7 @@ def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
     new: dict[str, Any] = {}
     changed: list[str] = []
     for col in obj.__table__.columns:
-        if col.key in ignore or col.key in _SENSITIVE_FIELDS:
+        if col.key in ignore or _is_sensitive(col.key):
             continue
         hist = attributes.get_history(obj, col.key)
         if not hist.has_changes():
