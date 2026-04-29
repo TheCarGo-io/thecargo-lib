@@ -69,6 +69,7 @@ MANAGER: Final[dict[str, str]] = {
         )
         for a in ("view", "create", "update", "delete")
     },
+    "toolbar_activity.view": "all",
 }
 
 SALES_AGENT: Final[dict[str, str]] = {
@@ -112,6 +113,7 @@ SALES_AGENT: Final[dict[str, str]] = {
         )
         for a in ("create", "update", "delete")
     },
+    "toolbar_activity.view": "own",
 }
 
 TEMPLATES: Final[dict[str, dict[str, str]]] = {

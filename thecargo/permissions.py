@@ -84,6 +84,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "toolbar_sms",
     "toolbar_email",
     "toolbar_payment",
+    "toolbar_activity",
 )
 
 RESOURCE_SET: Final[frozenset[str]] = frozenset(RESOURCES)
