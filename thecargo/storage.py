@@ -111,10 +111,10 @@ def object_path_from_url(url: str) -> str:
     if not url:
         return ""
     if _public_url and url.startswith(_public_url):
-        url = url[len(_public_url):]
+        url = url[len(_public_url) :]
     url = url.lstrip("/")
     if _bucket and url.startswith(f"{_bucket}/"):
-        url = url[len(_bucket) + 1:]
+        url = url[len(_bucket) + 1 :]
     return url
 
 
@@ -132,6 +132,31 @@ def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
     from datetime import timedelta
 
     return _client.presigned_get_object(_bucket, path, expires=timedelta(seconds=expires_seconds))
+
+
+@_retry
+def download_object_bytes(path: str) -> tuple[bytes, str]:
+    """Server-side fetch of an object's bytes + content-type.
+
+    The bucket is private, so a non-presigned ``shipment_files.url``
+    cannot be re-fetched over plain HTTP — ``httpx.get(url)`` returns
+    ``AccessDenied``. This helper bypasses the URL layer entirely and
+    pulls bytes directly through the authenticated MinIO client.
+
+    Used by the email dispatcher so private attachments still embed
+    cleanly in outbound mail without exposing a presigned URL to the
+    recipient (the bytes ride along inside the MIME envelope).
+    """
+    if _client is None:
+        raise RuntimeError("MinIO not initialized")
+    resp = _client.get_object(_bucket, path)
+    try:
+        data = resp.read()
+        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
+        return data, content_type
+    finally:
+        resp.close()
+        resp.release_conn()
 
 
 @_retry

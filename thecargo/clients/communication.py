@@ -32,6 +32,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+
 from thecargo.events import publisher
 
 from .service import ServiceClient
@@ -44,10 +45,11 @@ EMAIL_SEND_REQUESTED_TOPIC = "email.send.requested"
 class CommunicationClientError(RuntimeError):
     """Raised when the communication service rejects or fails a send."""
 
-    def __init__(self, status_code: int, detail: str):
+    def __init__(self, status_code: int, detail: str, code: str | None = None):
         super().__init__(f"communication service returned {status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+        self.code = code
 
 
 class CommunicationClient(ServiceClient):
@@ -135,8 +137,8 @@ class CommunicationClient(ServiceClient):
         try:
             return await self.post("/api/internal/email/send", json=payload)
         except httpx.HTTPStatusError as exc:
-            detail = _extract_detail(exc.response)
-            raise CommunicationClientError(exc.response.status_code, detail) from exc
+            detail, code = _extract_error(exc.response)
+            raise CommunicationClientError(exc.response.status_code, detail, code) from exc
 
     # ── RabbitMQ async path ────────────────────────────────────────
 
@@ -184,11 +186,19 @@ class CommunicationClient(ServiceClient):
         await publisher.publish(EMAIL_SEND_REQUESTED_TOPIC, payload)
 
 
-def _extract_detail(response: httpx.Response) -> str:
+def _extract_error(response: httpx.Response) -> tuple[str, str | None]:
+    """Extract (detail, code) from a structured error response.
+
+    Communication's exception handler returns ``{detail, code}``;
+    legacy/non-structured errors fall back to text + ``None`` code.
+    """
     try:
         body = response.json()
-    except Exception:
-        return response.text or "unknown error"
+    except ValueError:
+        return response.text or "unknown error", None
     if isinstance(body, dict):
-        return str(body.get("detail") or body)
-    return str(body)
+        detail = body.get("detail")
+        if detail is None:
+            return str(body), None
+        return str(detail), body.get("code")
+    return str(body), None
