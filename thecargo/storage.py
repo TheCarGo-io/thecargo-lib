@@ -3,6 +3,7 @@ import logging
 import time
 from functools import wraps
 from typing import Any
+from urllib.parse import urlparse
 
 from minio import Minio
 from minio.error import S3Error
@@ -11,6 +12,7 @@ from urllib3.exceptions import MaxRetryError
 logger = logging.getLogger(__name__)
 
 _client: Minio | None = None
+_signing_client: Minio | None = None
 _bucket: str = ""
 _public_url: str = ""
 
@@ -47,16 +49,45 @@ def _retry(func: Any) -> Any:
 def init_storage(
     endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False, public_url: str = ""
 ):
-    global _client, _bucket, _public_url
+    """Initialize the MinIO client and a separate signing client.
+
+    ``endpoint`` carries server-side traffic (uploads, server-fetches) and
+    can be an internal Docker DNS name for low-latency in-cluster I/O.
+    ``public_url`` defines the host used for presigned URLs handed to
+    browsers — SigV4 binds the Host header into the signature, so signing
+    must happen against the externally reachable hostname.
+    """
+    global _client, _signing_client, _bucket, _public_url
     try:
         _client = Minio(endpoint=endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
         _bucket = bucket
         _public_url = public_url or f"{'https' if secure else 'http'}://{endpoint}"
+
+        sign_endpoint, sign_secure = _parse_public_url(_public_url)
+        if sign_endpoint and (sign_endpoint, sign_secure) != (endpoint, secure):
+            _signing_client = Minio(
+                endpoint=sign_endpoint,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=sign_secure,
+            )
+            logger.info("MinIO connected: %s/%s (presign via %s)", endpoint, bucket, sign_endpoint)
+        else:
+            _signing_client = _client
+            logger.info("MinIO connected: %s/%s", endpoint, bucket)
+
         _ensure_bucket()
-        logger.info("MinIO connected: %s/%s", endpoint, bucket)
     except Exception as e:
         logger.warning("MinIO not available: %s. File uploads disabled.", e)
         _client = None
+        _signing_client = None
+
+
+def _parse_public_url(url: str) -> tuple[str, bool]:
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return "", False
+    return parsed.netloc, parsed.scheme == "https"
 
 
 def _ensure_bucket():
@@ -126,12 +157,16 @@ def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
     bytes directly without server-side proxying. Default 10-minute
     expiry covers a click-to-download flow without leaving long-lived
     tokens in browser history.
+
+    Signed via ``_signing_client`` (bound to ``MINIO_PUBLIC_URL``) so the
+    URL host matches what the browser can actually reach. Server-side
+    operations (upload, server-fetch) keep using the internal ``_client``.
     """
-    if _client is None:
+    if _signing_client is None:
         raise RuntimeError("MinIO not initialized")
     from datetime import timedelta
 
-    return _client.presigned_get_object(_bucket, path, expires=timedelta(seconds=expires_seconds))
+    return _signing_client.presigned_get_object(_bucket, path, expires=timedelta(seconds=expires_seconds))
 
 
 @_retry
