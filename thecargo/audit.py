@@ -1,29 +1,40 @@
 """Session-level auto-audit for ORM writes.
 
-Any model that subclasses :class:`Auditable` produces an :class:`AuditLog`
-row for every create/update/delete that passes through a SQLAlchemy
-session. The row is written inside the same transaction as the business
-mutation, so a rollback never leaves a phantom audit entry behind.
+Any model that subclasses :class:`Auditable` produces an audit event
+for every create/update/delete that passes through a SQLAlchemy
+session. Events are *published* to RabbitMQ (``audit.{service}.{action}``
+on the ``thecargo.events`` topic exchange) for the dedicated audit
+service to consume and store in MongoDB.
+
+Publish timing is ``after_commit`` — a rolled-back transaction never
+emits an audit event, so audit history stays consistent with the
+data that actually landed in the database. The publish itself is
+fire-and-forget via ``asyncio.create_task``: if RabbitMQ is briefly
+unreachable the event is logged and dropped (acceptable for the
+current test phase; production should add a transactional outbox).
 
 Bulk SQL statements (``session.execute(update(...))`` /
-``session.execute(delete(...))``) bypass the ORM and therefore bypass this
-listener by design — call sites that must audit such operations should
-load rows and use ``session.delete`` / ``obj.field = ...`` instead.
+``session.execute(delete(...))``) bypass the ORM and therefore bypass
+this listener by design — call sites that must audit such operations
+should load rows and use ``session.delete`` / ``obj.field = ...``
+instead.
 """
 
+import asyncio
 import logging
 import os
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, ClassVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import event
 from sqlalchemy import inspect as sa_inspect
 
 from thecargo.context import get_audit_context
-from thecargo.models.audit_log import AuditLog
+from thecargo.events import publisher
+from thecargo.utils.timezone import now_ny
 
 logger = logging.getLogger(__name__)
 
@@ -170,70 +181,165 @@ def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
     return old, new, changed
 
 
-def _build_log(
+def _build_payload(
     action: str,
     obj: "Auditable",
     old_data: dict | None,
     new_data: dict | None,
     changed: list[str] | None,
-) -> AuditLog:
+) -> dict[str, Any]:
+    """Compose the JSON-safe envelope the audit service consumes.
+
+    The shape is the canonical audit document Mongo will store —
+    consumer is a thin pass-through, so getting the field set right
+    here keeps the read API stable. ``audit_id`` is minted as a UUID
+    so the consumer's unique index can dedup retried deliveries
+    without losing the source row's identity.
+    """
     ctx = get_audit_context()
     try:
         label = obj.__audit_label__()
     except Exception:
         label = None
-    return AuditLog(
-        organization_id=getattr(obj, "organization_id", None),
-        actor_id=ctx.actor_id,
-        actor_email=ctx.actor_email,
-        service=_SERVICE_NAME,
-        resource=obj.__audit_resource__,
-        resource_id=str(obj.id) if getattr(obj, "id", None) is not None else "",
-        resource_label=(label[:500] if label else None),
-        action=action,
-        changed_fields=changed,
-        old_data=old_data,
-        new_data=new_data,
-        request_id=ctx.request_id,
-        ip_address=ctx.ip_address,
-        user_agent=(ctx.user_agent[:500] if ctx.user_agent else None),
-    )
+    org_id = getattr(obj, "organization_id", None)
+    obj_id = getattr(obj, "id", None)
+    return {
+        "audit_id": str(uuid4()),
+        "service": _SERVICE_NAME or "unknown",
+        "organization_id": str(org_id) if org_id is not None else None,
+        "actor_id": str(ctx.actor_id) if ctx.actor_id is not None else None,
+        "actor_email": ctx.actor_email,
+        "resource": obj.__audit_resource__,
+        "resource_id": str(obj_id) if obj_id is not None else None,
+        "resource_label": (label[:500] if label else None),
+        "action": action,
+        "changed_fields": changed,
+        "old_data": old_data,
+        "new_data": new_data,
+        "request_id": str(ctx.request_id) if ctx.request_id is not None else None,
+        "ip_address": ctx.ip_address,
+        "user_agent": (ctx.user_agent[:500] if ctx.user_agent else None),
+        "created_at": now_ny().isoformat(),
+    }
+
+
+async def emit_audit_event(
+    *,
+    service: str | None = None,
+    resource: str,
+    resource_id: str,
+    action: str,
+    resource_label: str | None = None,
+    organization_id: str | None = None,
+    old_data: dict | None = None,
+    new_data: dict | None = None,
+    changed_fields: list[str] | None = None,
+) -> None:
+    """Publish an audit event from a non-ORM call site.
+
+    The :class:`Auditable` mixin covers ORM writes, but a handful of
+    admin/back-office endpoints mutate state through raw SQL or
+    cross-service RPC and still need an audit row. Call this from
+    those sites to emit the same envelope the ORM listener produces;
+    the audit service has no idea (or care) that the publisher path
+    differs.
+
+    All identifying fields default to ``None`` so the caller passes
+    only what's meaningful for that particular write — a permission
+    flip, for instance, has no ``old_data``/``new_data`` snapshot the
+    way an ORM update does, just a ``changed_fields`` list.
+    """
+    ctx = get_audit_context()
+    payload = {
+        "audit_id": str(uuid4()),
+        "service": service or _SERVICE_NAME or "unknown",
+        "organization_id": organization_id,
+        "actor_id": str(ctx.actor_id) if ctx.actor_id is not None else None,
+        "actor_email": ctx.actor_email,
+        "resource": resource,
+        "resource_id": resource_id,
+        "resource_label": (resource_label[:500] if resource_label else None),
+        "action": action,
+        "changed_fields": changed_fields,
+        "old_data": old_data,
+        "new_data": new_data,
+        "request_id": str(ctx.request_id) if ctx.request_id is not None else None,
+        "ip_address": ctx.ip_address,
+        "user_agent": (ctx.user_agent[:500] if ctx.user_agent else None),
+        "created_at": now_ny().isoformat(),
+    }
+    await _publish_one(payload)
+
+
+async def _publish_one(payload: dict[str, Any]) -> None:
+    """Publish one audit event to RabbitMQ — invoked as a background task.
+
+    Failures are logged and swallowed so a broker hiccup never
+    propagates as an unhandled task exception (which would clutter
+    logs with ``Task exception was never retrieved`` warnings).
+    """
+    routing_key = f"audit.{payload['service']}.{payload['action']}"
+    try:
+        await publisher.publish(routing_key, payload)
+    except Exception:
+        logger.exception("audit publish failed: routing_key=%s", routing_key)
 
 
 def register_audit_listeners(session_class) -> None:
-    """Attach capture/write hooks to a sync ``Session`` class.
+    """Attach capture/publish hooks to a sync ``Session`` class.
 
-    For async workflows pass ``async_sessionmaker.sync_session_class`` — the
-    sync Session is what actually dispatches flush events under the hood.
+    Two-phase listener pattern:
+
+    * ``before_flush`` — capture each Auditable mutation while
+      ``committed_state`` still holds the pre-mutation values that
+      :func:`_diff` needs. The payload is staged in ``session.info``,
+      not in any persistent store, so a rolled-back flush leaves
+      nothing behind.
+    * ``after_commit`` — drain the staged payloads and schedule a
+      publish task per event. Running on commit (not flush) means
+      a rolled-back transaction never emits a phantom audit, which
+      is the whole point of pairing audit with the data write.
+
+    For async workflows pass ``async_sessionmaker.sync_session_class``
+    — the sync Session is what actually dispatches flush/commit events
+    under the hood.
     """
 
     @event.listens_for(session_class, "before_flush")
     def _capture(session, flush_context, instances):
-        staged: list[tuple] = session.info.setdefault(_PENDING_KEY, [])
+        staged: list[dict[str, Any]] = session.info.setdefault(_PENDING_KEY, [])
         try:
             for obj in session.new:
                 if isinstance(obj, Auditable):
-                    staged.append(("create", obj, None, _snapshot(obj), None))
+                    staged.append(_build_payload("create", obj, None, _snapshot(obj), None))
             for obj in session.dirty:
                 if isinstance(obj, Auditable):
                     old, new, changed = _diff(obj)
                     if changed:
-                        staged.append(("update", obj, old, new, changed))
+                        staged.append(_build_payload("update", obj, old, new, changed))
             for obj in session.deleted:
                 if isinstance(obj, Auditable):
-                    staged.append(("delete", obj, _snapshot(obj), None, None))
+                    staged.append(_build_payload("delete", obj, _snapshot(obj), None, None))
         except Exception:
-            logger.exception("audit capture failed; audit rows may be missing")
+            logger.exception("audit capture failed; audit events may be missing")
 
-    @event.listens_for(session_class, "after_flush")
-    def _write(session, flush_context):
+    @event.listens_for(session_class, "after_commit")
+    def _publish(session):
         staged = session.info.pop(_PENDING_KEY, [])
-        for action, obj, old_data, new_data, changed in staged:
-            try:
-                session.add(_build_log(action, obj, old_data, new_data, changed))
-            except Exception:
-                logger.exception(
-                    "audit write failed: %s %s",
-                    action,
-                    getattr(obj, "__audit_resource__", type(obj).__name__),
-                )
+        if not staged:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(
+                "audit publish skipped: no running event loop (count=%d). "
+                "Likely a sync session outside an ASGI request.",
+                len(staged),
+            )
+            return
+        for payload in staged:
+            loop.create_task(_publish_one(payload))
+
+    @event.listens_for(session_class, "after_rollback")
+    def _drop_on_rollback(session):
+        session.info.pop(_PENDING_KEY, None)
