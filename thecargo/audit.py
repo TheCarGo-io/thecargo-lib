@@ -14,14 +14,13 @@ load rows and use ``session.delete`` / ``obj.field = ...`` instead.
 import logging
 import os
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import event
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.orm import attributes
 
 from thecargo.context import get_audit_context
 from thecargo.models.audit_log import AuditLog
@@ -107,20 +106,64 @@ def _snapshot(obj: "Auditable") -> dict[str, Any]:
     return out
 
 
+def _values_equivalent(old: Any, new: Any) -> bool:
+    """Treat type-mismatched but semantically-equal values as the same.
+
+    SQLAlchemy marks an attribute dirty the moment any assignment
+    happens — the API layer commonly hands the ORM a string ("4200.00")
+    where the DB stored a ``Decimal('4200.00')``, and a plain ``==``
+    rejects them as different. Without this normalisation the audit
+    feed fills with no-op ``changed_fields`` entries that confuse the
+    forensic / compliance use case the table exists for. Money-like
+    pairs round-trip through :class:`Decimal`, datetime/date/time
+    pairs through ``str()``, and everything else falls back to a
+    string compare so the helper never raises on exotic types.
+    """
+    if old is None and new is None:
+        return True
+    if old is None and new == "":
+        return True
+    if new is None and old == "":
+        return True
+    if old is None or new is None:
+        return False
+    if old == new:
+        return True
+    if isinstance(old, (datetime, date, time)) or isinstance(new, (datetime, date, time)):
+        return str(old) == str(new)
+    try:
+        return Decimal(str(old)) == Decimal(str(new))
+    except (InvalidOperation, ValueError, TypeError):
+        pass
+    return str(old) == str(new)
+
+
 def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
-    """Return only the columns whose value actually changed this flush."""
+    """Return only the columns whose value actually changed this flush.
+
+    Combines :meth:`InstanceState.committed_state` (SQLAlchemy's
+    canonical "loaded value before the current mutation") with
+    :func:`_values_equivalent` so an assignment that doesn't actually
+    change the underlying value never lands in ``changed_fields``.
+    The bare ``attributes.get_history(...).has_changes()`` reports
+    "dirty" for every set call regardless of equality and produces
+    the no-op rows where every diff entry has ``old == new``.
+    """
     ignore = obj.__audit_ignore__
     old: dict[str, Any] = {}
     new: dict[str, Any] = {}
     changed: list[str] = []
+    state = sa_inspect(obj)
+    committed = state.committed_state
     for col in obj.__table__.columns:
         if col.key in ignore or _is_sensitive(col.key):
             continue
-        hist = attributes.get_history(obj, col.key)
-        if not hist.has_changes():
+        if col.key not in committed:
             continue
-        old_val = hist.deleted[0] if hist.deleted else None
-        new_val = hist.added[0] if hist.added else getattr(obj, col.key, None)
+        old_val = committed[col.key]
+        new_val = getattr(obj, col.key, None)
+        if _values_equivalent(old_val, new_val):
+            continue
         old[col.key] = _jsonify(old_val)
         new[col.key] = _jsonify(new_val)
         changed.append(col.key)

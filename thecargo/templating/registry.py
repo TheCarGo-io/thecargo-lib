@@ -187,8 +187,8 @@ SHIPMENT_SCHEMA = ObjectSchema(
         FieldDef("transport_type", "Transport type", "open"),
         FieldDef("instructions", "Instructions", "Call before arrival"),
         FieldDef("first_available_date", "First available", "2026-04-25", formatter="date_short"),
-        FieldDef("estimated_pickup_at", "Est. pickup", "2026-04-26T08:00:00", formatter="datetime_short"),
-        FieldDef("estimated_delivery_at", "Est. delivery", "2026-04-29T16:00:00", formatter="datetime_short"),
+        FieldDef("estimated_pickup_at", "Est. pickup", "2026-04-26", formatter="date_short"),
+        FieldDef("estimated_delivery_at", "Est. delivery", "2026-04-29", formatter="date_short"),
         FieldDef("created_at", "Created at", "2026-04-20T10:00:00", formatter="date_short"),
     ),
 )
