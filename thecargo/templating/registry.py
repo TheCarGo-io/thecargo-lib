@@ -280,9 +280,13 @@ REGISTRY: tuple[Variable, ...] = (
     *_expand("carrier", "Carrier", group="Carrier"),
     *_expand("agent", "Agent", group="Sender", subgroup="Sales rep"),
     *_expand("org", "Org", group="Sender", subgroup="Company"),
-    Variable(path="current_date", label="Today's date", group="Date & Time", sample="Apr 25, 2026", formatter="date_short"),
+    Variable(
+        path="current_date", label="Today's date", group="Date & Time", sample="Apr 25, 2026", formatter="date_short"
+    ),
     Variable(path="current_year", label="Current year", group="Date & Time", sample=2026),
-    Variable(path="tracking_link", label="Tracking link", group="Tracking", sample="https://app.thecargo.io/track/ORD-1234"),
+    Variable(
+        path="tracking_link", label="Tracking link", group="Tracking", sample="https://app.thecargo.io/track/ORD-1234"
+    ),
 )
 
 
@@ -310,10 +314,7 @@ def registry_tree() -> dict:
             {
                 "label": g["label"],
                 "items": g["items"],
-                "subgroups": [
-                    {"label": sg["label"], "items": sg["items"]}
-                    for sg in g["subgroups"].values()
-                ],
+                "subgroups": [{"label": sg["label"], "items": sg["items"]} for sg in g["subgroups"].values()],
             }
             for g in groups.values()
         ],
@@ -384,10 +385,20 @@ def sample_context() -> dict:
             cursor = cursor.setdefault(p, {})
         if isinstance(cursor, dict):
             cursor[parts[-1]] = v.sample
-    ctx.setdefault("vehicles", [
-        {"year": 2020, "make": "Toyota", "model": "Camry", "vin": "1HG...", "color": "Blue", "is_inoperable": False},
-        {"year": 2018, "make": "Honda", "model": "Civic", "vin": "2HG...", "color": "Red", "is_inoperable": False},
-    ])
+    ctx.setdefault(
+        "vehicles",
+        [
+            {
+                "year": 2020,
+                "make": "Toyota",
+                "model": "Camry",
+                "vin": "1HG...",
+                "color": "Blue",
+                "is_inoperable": False,
+            },
+            {"year": 2018, "make": "Honda", "model": "Civic", "vin": "2HG...", "color": "Red", "is_inoperable": False},
+        ],
+    )
     ctx["_meta"] = {"locale": "en", "tz": "America/New_York", "currency": "USD"}
     return ctx
 
