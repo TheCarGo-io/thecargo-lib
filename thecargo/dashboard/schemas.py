@@ -9,6 +9,10 @@ so the frontend issues two requests and merges them. Every other panel maps
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import Enum
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -120,12 +124,38 @@ class DashboardQueueResponse(BaseModel):
     )
 
 
+class CalendarItemKind(str, Enum):
+    """Discriminator the frontend keys off to route a click on a calendar row.
+
+    `stop` rows open the shipment detail view, `task` rows open the toolbar
+    task, and `follow_up_summary` opens the quotes-needing-follow-up list.
+    """
+
+    STOP = "stop"
+    TASK = "task"
+    FOLLOW_UP_SUMMARY = "follow_up_summary"
+
+
 class CalendarListItem(BaseModel):
-    time: str = Field(..., description="Display time, e.g. '9:00 AM' or 'EOD'")
-    text: str = Field(..., description="Primary label (event title)")
-    meta: str = Field("", description="Secondary line (order ref, vehicle, route)")
-    tag: str = Field(..., description="Pill text", examples=["Pickup", "Delivery"])
-    cls: str = Field(..., description="Pill style class suffix", examples=["pickup", "dropoff"])
+    at: datetime | None = Field(
+        None,
+        description="Tz-aware ISO timestamp. `null` = EOD / anytime today (used by `follow_up_summary`).",
+    )
+    text: str = Field(..., description="Primary line (event title)")
+    meta: str = Field("", description="Secondary line (order ref, customer, follow-up codes, ...)")
+    tag: str = Field(..., description="Pill text", examples=["Pickup", "Call", "Deposit", "Drop-off", "Follow up"])
+    cls: str = Field(
+        ...,
+        description="Pill style suffix",
+        examples=["pickup", "call", "deposit", "dropoff", "followup"],
+    )
+    kind: CalendarItemKind = Field(..., description="Discriminator for frontend click routing")
+    shipment_id: UUID | None = Field(None, description="Set when kind=stop or kind=task")
+    task_id: UUID | None = Field(None, description="Set when kind=task")
+    shipment_ids: list[UUID] | None = Field(
+        None,
+        description="Parallel to the codes in `meta` for kind=follow_up_summary; first 3 only.",
+    )
 
 
 class DashboardCalendarResponse(BaseModel):
@@ -138,11 +168,15 @@ class DashboardCalendarResponse(BaseModel):
                 "date_label": "Apr 29",
                 "items": [
                     {
-                        "time": "9:00 AM",
-                        "text": "2022 Tesla Model Y · Dallas, TX",
-                        "meta": "Order #O-2050 · ACME Logistics",
+                        "at": "2025-04-29T13:00:00+00:00",
+                        "text": "Pickup · 2022 Tesla Model Y",
+                        "meta": "Order #O-2050 · ACME Logistics · Dallas, TX",
                         "tag": "Pickup",
                         "cls": "pickup",
+                        "kind": "stop",
+                        "shipment_id": "1a2b3c4d-0000-0000-0000-000000000001",
+                        "task_id": None,
+                        "shipment_ids": None,
                     }
                 ],
             }
@@ -326,8 +360,7 @@ class DashboardPerformanceResponse(BaseModel):
     kpis: list[DashboardKpi] = Field(
         ...,
         description=(
-            "Five KPI tiles in render order: Quoted, Dispatched, Dispatch rate, "
-            "Avg margin / order, Payments collected."
+            "Five KPI tiles in render order: Quoted, Dispatched, Dispatch rate, Avg margin / order, Payments collected."
         ),
     )
     chart: DashboardChartSeries

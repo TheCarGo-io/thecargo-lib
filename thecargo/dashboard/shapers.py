@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from thecargo.dashboard.period import ResolvedPeriod
 from thecargo.dashboard.schemas import (
     ActivityListItem,
+    CalendarItemKind,
     CalendarListItem,
     DashboardActivityResponse,
     DashboardCalendarResponse,
@@ -441,43 +442,176 @@ def shape_queue(raw: dict) -> DashboardQueueResponse:
     return DashboardQueueResponse(needs_attention=needs, ready_to_ship=ready, waiting_on_customer=waiting)
 
 
-_PILL_CLASS = {"pickup": "pickup", "delivery": "dropoff"}
-_PILL_TEXT = {"pickup": "Pickup", "delivery": "Delivery"}
+_STOP_PILL_TEXT = {"pickup": "Pickup", "delivery": "Drop-off"}
+_STOP_PILL_CLASS = {"pickup": "pickup", "delivery": "dropoff"}
+_TASK_PILL_TEXT = {"phone": "Call", "payment": "Deposit", "general": "Follow up"}
+_TASK_PILL_CLASS = {"phone": "call", "payment": "deposit", "general": "followup"}
 
 
-def _fmt_calendar_time(iso: str) -> str:
+def _parse_iso(value: str | datetime | None) -> datetime | None:
+    """Tolerant ISO/datetime parser used by the calendar shaper."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
     try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
-        return ""
-    return dt.astimezone(ORG_TZ).strftime("%-I:%M %p")
+        return None
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _parse_iso_time(value: str | None):
+    """Parse `HH:MM[:SS[.ffffff]]` or a full ISO string and return a `time` (or `None`)."""
+    if value is None:
+        return None
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text).time()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%H:%M:%S").time()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%H:%M").time()
+    except ValueError:
+        return None
+
+
+def _task_at(task: dict) -> datetime | None:
+    """Combine the task's local `date` + `start_time` into an aware UTC datetime."""
+    d = _parse_iso_date(task.get("date"))
+    if d is None:
+        return None
+    t = _parse_iso_time(task.get("start_time"))
+    if t is None:
+        return None
+    local = datetime.combine(d, t).replace(tzinfo=ORG_TZ)
+    return local.astimezone(timezone.utc)
+
+
+def _stop_row(stop: dict) -> CalendarListItem:
+    stop_type = (stop.get("stop_type") or "pickup").lower()
+    city = stop.get("city")
+    state = stop.get("state")
+    location = ", ".join(p for p in (city, state) if p)
+    code = stop.get("shipment_code") or ""
+    vehicle = stop.get("vehicle_summary")
+    tag = _STOP_PILL_TEXT.get(stop_type, stop_type.title())
+    cls = _STOP_PILL_CLASS.get(stop_type, stop_type)
+    text = f"{tag} · {vehicle}" if vehicle else (f"{tag} · #{code}" if code else tag)
+    meta_parts: list[str] = []
+    if code:
+        meta_parts.append(f"Order #{code}")
+    if stop_type == "pickup" and stop.get("customer_name"):
+        meta_parts.append(stop["customer_name"])
+    if location:
+        meta_parts.append(location)
+    return CalendarListItem(
+        at=_parse_iso(stop.get("scheduled_at")),
+        text=text,
+        meta=" · ".join(meta_parts),
+        tag=tag,
+        cls=cls,
+        kind=CalendarItemKind.STOP,
+        shipment_id=stop.get("shipment_id"),
+    )
+
+
+def _task_row(task: dict) -> CalendarListItem:
+    raw_type = (task.get("type") or "general").lower()
+    task_type = raw_type if raw_type in _TASK_PILL_TEXT else "general"
+    tag = _TASK_PILL_TEXT[task_type]
+    cls = _TASK_PILL_CLASS[task_type]
+    code = task.get("shipment_code") or ""
+    if task_type == "phone":
+        text = f"Follow up · {task.get('assignee_name') or 'Unassigned'}"
+        meta_bits: list[str] = []
+        if code:
+            meta_bits.append(f"Quote #{code}")
+        days = task.get("days_since_last_contact")
+        if isinstance(days, int) and days >= 0:
+            meta_bits.append(f"{days} days since last contact")
+        meta = " · ".join(meta_bits)
+    elif task_type == "payment":
+        amount_cents = task.get("amount_cents") or 0
+        text = f"Deposit due · {_fmt_money(int(amount_cents))}"
+        meta_bits = []
+        if code:
+            meta_bits.append(f"Quote #{code}")
+        if task.get("customer_name"):
+            meta_bits.append(task["customer_name"])
+        meta = " · ".join(meta_bits)
+    else:
+        title = task.get("title") or "Follow up"
+        text = f"Follow up · {title}"
+        meta_bits = []
+        if code:
+            meta_bits.append(f"#{code}")
+        if task.get("customer_name"):
+            meta_bits.append(task["customer_name"])
+        meta = " · ".join(meta_bits)
+    return CalendarListItem(
+        at=_task_at(task),
+        text=text,
+        meta=meta,
+        tag=tag,
+        cls=cls,
+        kind=CalendarItemKind.TASK,
+        shipment_id=task.get("shipment_id"),
+        task_id=task.get("task_id"),
+    )
+
+
+def _follow_up_summary_row(summary: dict) -> CalendarListItem:
+    count = int(summary.get("count") or 0)
+    codes = list(summary.get("codes") or [])[:3]
+    shipment_ids = list(summary.get("shipment_ids") or [])[:3]
+    text = f"{count} quotes need follow-up today"
+    meta = ", ".join(f"Q-{c}" for c in codes)
+    return CalendarListItem(
+        at=None,
+        text=text,
+        meta=meta,
+        tag="Follow up",
+        cls="followup",
+        kind=CalendarItemKind.FOLLOW_UP_SUMMARY,
+        shipment_ids=shipment_ids or None,
+    )
 
 
 def shape_calendar(raw: dict) -> DashboardCalendarResponse:
-    """Build the calendar response from shipment's `/api/internal/dashboard/calendar` payload."""
+    """Build the calendar response from the shipment service's per-day payload.
+
+    `raw` carries three sections — `stops` (pickup / delivery from
+    `shipment_stops`), `tasks` (today's pending `shipment_tasks`), and an
+    optional `follow_up_summary` aggregate for quotes that still need a
+    follow-up. Stops + timed tasks are interleaved by `at`; the EOD
+    follow-up summary, if present, lands at the bottom.
+    """
     today_label = datetime.now(ORG_TZ).strftime("%b %-d")
-    items: list[CalendarListItem] = []
-    for it in raw.get("items", []):
-        stop_type = it.get("stop_type") or "pickup"
-        city = it.get("city")
-        state = it.get("state")
-        location = ", ".join(p for p in (city, state) if p)
-        title_parts = [p for p in (it.get("vehicle_summary"), location) if p]
-        text = " · ".join(title_parts) if title_parts else it.get("shipment_code", "")
-        meta_parts = []
-        if it.get("shipment_code"):
-            meta_parts.append(f"Order #{it['shipment_code']}")
-        if it.get("customer_name"):
-            meta_parts.append(it["customer_name"])
-        items.append(
-            CalendarListItem(
-                time=_fmt_calendar_time(it["scheduled_at"]) if it.get("scheduled_at") else "—",
-                text=text,
-                meta=" · ".join(meta_parts),
-                tag=_PILL_TEXT.get(stop_type, stop_type.title()),
-                cls=_PILL_CLASS.get(stop_type, stop_type),
-            )
-        )
+    if raw.get("date_label"):
+        today_label = str(raw["date_label"])
+    timed_items: list[CalendarListItem] = []
+    for stop in raw.get("stops") or []:
+        timed_items.append(_stop_row(stop))
+    for task in raw.get("tasks") or []:
+        timed_items.append(_task_row(task))
+    timed_items.sort(key=lambda i: i.at or datetime.max.replace(tzinfo=timezone.utc))
+    items: list[CalendarListItem] = list(timed_items)
+    summary = raw.get("follow_up_summary")
+    if summary and int(summary.get("count") or 0) > 0:
+        items.append(_follow_up_summary_row(summary))
     return DashboardCalendarResponse(date_label=today_label, items=items)
 
 
