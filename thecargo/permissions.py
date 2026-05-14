@@ -68,6 +68,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "order_feedback",
     "merchant",
     "payment_app",
+    "credit_card",
     "conversation",
     "sip_credential",
     "power_dialer",
