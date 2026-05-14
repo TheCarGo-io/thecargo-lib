@@ -5,10 +5,23 @@ import httpx
 
 
 class ServiceClient:
-    def __init__(self, base_url: str, timeout: float = 10.0):
+    """HTTP client for service-to-service calls.
+
+    Pass ``service_secret=settings.SERVICE_SECRET_KEY`` from the caller's
+    Settings so the secret comes from the loaded ``.env`` (pydantic) and
+    not the process environment — the latter is empty when a service is
+    started via uvicorn without ``--env-file``, which previously caused
+    silent 403 ``Invalid service secret`` failures downstream.
+
+    Backward-compatible default: when ``service_secret`` is omitted, fall
+    back to ``os.environ["SERVICE_SECRET_KEY"]`` (Docker/swarm passes
+    env vars through to the process so the fallback works there).
+    """
+
+    def __init__(self, base_url: str, *, service_secret: str | None = None, timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self._secret = os.environ.get("SERVICE_SECRET_KEY", "")
+        self._secret = service_secret if service_secret is not None else os.environ.get("SERVICE_SECRET_KEY", "")
 
     def _headers(self) -> dict:
         return {"X-Service-Secret": self._secret}
