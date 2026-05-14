@@ -73,7 +73,7 @@ class CommunicationClient(ServiceClient):
         """Send an email rendered from a system or org template.
 
         ``key`` is the slug seeded in the templates table (e.g.
-        ``verify_code``, ``payment_pa``). ``organization_id`` is required
+        ``verify_code``, ``payment_invoice``). ``organization_id`` is required
         for org-scoped templates and recommended for system templates so
         the per-org override (if any) wins over the platform fallback.
         """
