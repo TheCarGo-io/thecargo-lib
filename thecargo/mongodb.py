@@ -22,14 +22,46 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from decimal import Decimal
+from typing import Any
 
 from beanie import Document, init_beanie
+from bson.codec_options import TypeEncoder, TypeRegistry
+from bson.decimal128 import Decimal128
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient | None = None
 _db_name: str = ""
+
+
+class _DecimalEncoder(TypeEncoder):
+    """Driver-level codec that maps Python ``Decimal`` onto BSON ``Decimal128``.
+
+    Third-party SDKs (Stripe is the worst offender, but Authorize.net and
+    Central Dispatch hand back ``Decimal`` too) leak ``Decimal`` instances
+    deep inside webhook payloads we archive verbatim. Native BSON has no
+    encoder for ``Decimal``, so without this codec every archive write
+    that contains one fails with ``InvalidDocument`` and the upstream
+    delivery is lost. Registering at the client level fixes the issue
+    once for every collection (Beanie + raw motor) instead of asking
+    every webhook receiver to remember to walk-and-convert before
+    writing.
+    """
+
+    python_type = Decimal
+
+    def transform_python(self, value: Decimal) -> Decimal128:
+        return Decimal128(value)
+
+
+_TYPE_REGISTRY = TypeRegistry([_DecimalEncoder()])
+
+
+def _client_kwargs(extra: dict[str, Any]) -> dict[str, Any]:
+    """Merge the shared codec into per-call client tuning so every connection picks it up."""
+    return {"type_registry": _TYPE_REGISTRY, **extra}
 
 
 async def init_mongo(
@@ -64,11 +96,15 @@ async def init_mongo(
 
     client = AsyncIOMotorClient(
         uri,
-        maxPoolSize=max_pool_size,
-        minPoolSize=min_pool_size,
-        serverSelectionTimeoutMS=server_selection_timeout_ms,
-        connectTimeoutMS=connect_timeout_ms,
-        maxIdleTimeMS=max_idle_time_ms,
+        **_client_kwargs(
+            dict(
+                maxPoolSize=max_pool_size,
+                minPoolSize=min_pool_size,
+                serverSelectionTimeoutMS=server_selection_timeout_ms,
+                connectTimeoutMS=connect_timeout_ms,
+                maxIdleTimeMS=max_idle_time_ms,
+            )
+        ),
     )
     default_db = client.get_default_database()
     resolved_db_name = db_name or (default_db.name if default_db is not None else None)
