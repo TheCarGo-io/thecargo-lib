@@ -9,19 +9,41 @@ file needs to change.
 Naming convention
 -----------------
 - Top-level keys are domain entities: ``customer``, ``shipment``,
-  ``pickup``, ``delivery``, ``carrier``, ``agent``, ``org``.
+  ``pickup``, ``delivery``, ``carrier``, ``agent``, ``company``,
+  ``payment``.
+- ``org`` is kept as a legacy alias for ``company`` so existing
+  shipment-side templates keep rendering. Authors of new templates
+  should prefer ``company`` — it matches the connecta_v2 keys
+  (``{company.name}`` / ``{company.email}``) users are migrating
+  from and exposes the richer CompanyInfo branding fields
+  (mainline, fax, address, hours, …).
 - Lists use plural names: ``vehicles``.
 - Scalar leaves use ``snake_case``.
 - Snippets (multi-token Liquid blocks) live alongside scalars but
   carry an explicit ``insert`` payload.
 
+Formatter convention
+--------------------
+``FieldDef.formatter`` is *documentation metadata only*. The
+renderer does **not** auto-apply formatters. Builders must emit
+already-formatted strings — see ``billing/_build_payment_context``
+(``_money`` / ``_humanize`` helpers) for the canonical pattern.
+Mixing the two — declaring a formatter and also wrapping the value
+in a Liquid filter — double-formats; declaring one and emitting raw
+Decimal/datetime leaks the type into the email body. Pick one,
+document it on the builder.
+
 Adding a new field
 ------------------
 1. Add a ``FieldDef`` to the appropriate ``ObjectSchema``.
 2. Add a top-level ``Variable`` referencing that path.
-3. Update the corresponding serializer in
-   ``shipment/app/services/v1/template_context.py`` so the builder
-   populates the new key for real shipments.
+3. Update every context builder that owns this entity so the
+   builder populates the new key for real data:
+   - shipment-side templates → ``shipment/app/services/v1/template_context.py``
+   - payment / receipt templates → ``billing/app/services/v1/payment_actions.py:_build_payment_context``
+4. The contract tests in each service assert REGISTRY paths resolve
+   to non-None in a sample builder output; they fail CI if you
+   skip step 3.
 """
 
 from __future__ import annotations
@@ -29,7 +51,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-VERSION = 2
+VERSION = 3
 
 
 class VarType(str, Enum):
@@ -207,6 +229,52 @@ PRICING_SCHEMA = ObjectSchema(
     ),
 )
 
+COMPANY_SCHEMA = ObjectSchema(
+    name="Company",
+    label="Sender (your company)",
+    fields=(
+        FieldDef("name", "Company name", "TheCargo Inc"),
+        FieldDef("department", "Department", "Logistics"),
+        FieldDef("email", "Company email", "support@thecargo.io"),
+        FieldDef("support_email", "Support email", "support@thecargo.io"),
+        FieldDef("accounting_email", "Accounting email", "billing@thecargo.io"),
+        FieldDef("phone", "Company phone", "(800) 555-0199", formatter="phone"),
+        FieldDef("mainline", "Mainline", "(800) 555-0199", formatter="phone"),
+        FieldDef("fax", "Fax", "(800) 555-0188", formatter="phone"),
+        FieldDef("address", "Office address", "1200 Main St, Houston, TX 77006"),
+        FieldDef("website", "Website", "https://thecargo.io"),
+        FieldDef("logo", "Logo URL", "https://cdn.thecargo.io/logos/acme.png"),
+        FieldDef("slug", "Slug", "thecargo"),
+        FieldDef("short_code", "Short code (initials)", "TC"),
+        FieldDef("code_letter", "Code letter", "T"),
+        FieldDef("mon_fri", "Hours Mon–Fri", "9:00 AM – 6:00 PM"),
+        FieldDef("saturday", "Hours Sat", "10:00 AM – 2:00 PM"),
+        FieldDef("sunday", "Hours Sun", "Closed"),
+    ),
+)
+
+PAYMENT_SCHEMA = ObjectSchema(
+    name="Payment",
+    label="Payment",
+    fields=(
+        FieldDef("invoice_number", "Invoice #", "INV-A1B2C3D4"),
+        FieldDef("receipt_id", "Receipt ID", "1000A1B2C3D4"),
+        FieldDef("amount", "Amount (base)", "120.00", formatter="currency"),
+        FieldDef("amount_charged", "Amount charged", "125.00", formatter="currency"),
+        FieldDef("total", "Total (with surcharge/discount)", "125.00", formatter="currency"),
+        FieldDef("surcharge", "Surcharge", "5.00", formatter="currency"),
+        FieldDef("surcharge_fee_rate", "Surcharge rate (%)", 4),
+        FieldDef("discount", "Discount", "0.00", formatter="currency"),
+        FieldDef("method", "Method (raw)", "credit_card"),
+        FieldDef("method_display", "Method (display)", "Credit Card"),
+        FieldDef("name_display", "Charge type / method", "Reservation"),
+        FieldDef("reference", "Reference / Stripe invoice id", "in_1QabcDEFghiJK"),
+        FieldDef("card_last4", "Card last 4", "4242"),
+        FieldDef("paid_date", "Paid date (ISO)", "2026-05-14", formatter="date_short"),
+        FieldDef("due_date_display", "Due date (display)", "May 25, 2026"),
+    ),
+)
+
 
 SCHEMAS: dict[str, ObjectSchema] = {
     s.name: s
@@ -214,11 +282,13 @@ SCHEMAS: dict[str, ObjectSchema] = {
         CUSTOMER_SCHEMA,
         AGENT_SCHEMA,
         ORG_SCHEMA,
+        COMPANY_SCHEMA,
         CARRIER_SCHEMA,
         STOP_SCHEMA,
         VEHICLE_SCHEMA,
         SHIPMENT_SCHEMA,
         PRICING_SCHEMA,
+        PAYMENT_SCHEMA,
     )
 }
 
@@ -243,15 +313,48 @@ def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = No
     )
 
 
+def _expand_delivery_stop(group: str, subgroup: str | None) -> tuple[Variable, ...]:
+    """Stop schema reused for delivery but with destination-flavored samples.
+
+    Without per-side samples the preview shows
+    ``Houston, TX → Houston, TX`` because pickup and delivery share
+    STOP_SCHEMA. Real shipments diverge here, so the preview should
+    too — otherwise the operator sees a one-city route and assumes
+    the template is broken.
+    """
+    samples = {
+        "type": "delivery",
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75201",
+        "address": "550 Elm St",
+        "business_name": "Dallas Auto Yard",
+        "contact_name": "Sara Lee",
+        "contact_phone": "(214) 555-7788",
+        "scheduled_at": "2026-04-29T14:00:00",
+    }
+    schema = SCHEMAS["Stop"]
+    return tuple(
+        Variable(
+            path=f"delivery.{f.key}",
+            label=f.label,
+            group=group,
+            subgroup=subgroup,
+            sample=samples.get(f.key, f.sample),
+            formatter=f.formatter,
+            description=f.description,
+        )
+        for f in schema.fields
+    )
+
+
 REGISTRY: tuple[Variable, ...] = (
-    *_expand("customer", "Customer", group="Customer"),
-    *_expand("shipment", "Shipment", group="Shipment"),
-    *_expand("pickup", "Stop", group="Pickup"),
-    *_expand("delivery", "Stop", group="Delivery"),
+    *_expand("customer", "Customer", group="Customer information", subgroup="Customer info"),
     Variable(
         path="vehicles_inline",
         label="Vehicle list (inline)",
-        group="Vehicles",
+        group="Shipping details",
+        subgroup="Vehicle details",
         type=VarType.SCALAR,
         sample="2020 Toyota Camry, 2018 Honda Civic",
         insert=(
@@ -263,7 +366,8 @@ REGISTRY: tuple[Variable, ...] = (
     Variable(
         path="vehicles_bullets",
         label="Vehicle list (bullets)",
-        group="Vehicles",
+        group="Shipping details",
+        subgroup="Vehicle details",
         type=VarType.SCALAR,
         sample="• 2020 Toyota Camry\n• 2018 Honda Civic",
         insert=(
@@ -272,20 +376,86 @@ REGISTRY: tuple[Variable, ...] = (
         ),
         description="All vehicles, one per line with bullets.",
     ),
-    Variable(path="vehicles[0].year", label="First vehicle year", group="Vehicles", sample=2020),
-    Variable(path="vehicles[0].make", label="First vehicle make", group="Vehicles", sample="Toyota"),
-    Variable(path="vehicles[0].model", label="First vehicle model", group="Vehicles", sample="Camry"),
-    Variable(path="vehicles[0].vin", label="First vehicle VIN", group="Vehicles", sample="1HG..."),
-    *_expand("pricing", "Pricing", group="Pricing"),
-    *_expand("carrier", "Carrier", group="Carrier"),
-    *_expand("agent", "Agent", group="Sender", subgroup="Sales rep"),
-    *_expand("org", "Org", group="Sender", subgroup="Company"),
     Variable(
-        path="current_date", label="Today's date", group="Date & Time", sample="Apr 25, 2026", formatter="date_short"
+        path="vehicles[0].year",
+        label="First vehicle year",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample=2020,
     ),
-    Variable(path="current_year", label="Current year", group="Date & Time", sample=2026),
     Variable(
-        path="tracking_link", label="Tracking link", group="Tracking", sample="https://app.thecargo.io/track/ORD-1234"
+        path="vehicles[0].make",
+        label="First vehicle make",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="Toyota",
+    ),
+    Variable(
+        path="vehicles[0].model",
+        label="First vehicle model",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="Camry",
+    ),
+    Variable(
+        path="vehicles[0].vin",
+        label="First vehicle VIN",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="1HG...",
+    ),
+    *_expand("shipment", "Shipment", group="Shipping details", subgroup="Shipping info"),
+    *_expand("pickup", "Stop", group="Shipping details", subgroup="Origin information"),
+    *_expand_delivery_stop(group="Shipping details", subgroup="Destination information"),
+    Variable(
+        path="tracking_link",
+        label="Tracking link",
+        group="Shipping details",
+        subgroup="Other information",
+        sample="https://app.thecargo.io/track/ORD-1234",
+    ),
+    *_expand("pricing", "Pricing", group="Price info", subgroup="Price information"),
+    *_expand("payment", "Payment", group="Price info", subgroup="Payment details"),
+    Variable(
+        path="payment_url",
+        label="Pay Now link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://pay.thecargo.io/pay-to-orders/abc?slug=acme",
+        description="Hosted pay page for the customer to settle this invoice.",
+    ),
+    Variable(
+        path="card_url",
+        label="Card auth link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://app.thecargo.io/contract/cc-auth/abc/def",
+        description="Credit-card authorization form URL.",
+    ),
+    Variable(
+        path="sign_url",
+        label="Contract sign link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://app.thecargo.io/contract/abc",
+        description="Contract e-signature page URL.",
+    ),
+    *_expand("carrier", "Carrier", group="Carrier", subgroup="Carrier info"),
+    *_expand("company", "Company", group="Company / User information", subgroup="Company information"),
+    *_expand("agent", "Agent", group="Company / User information", subgroup="User information"),
+    *_expand("org", "Org", group="Company / User information", subgroup="Company (legacy)"),
+    Variable(
+        path="current_date",
+        label="Today's date",
+        group="Date & Time",
+        sample="Apr 25, 2026",
+        formatter="date_short",
+    ),
+    Variable(
+        path="current_year",
+        label="Current year",
+        group="Date & Time",
+        sample=2026,
     ),
 )
 
