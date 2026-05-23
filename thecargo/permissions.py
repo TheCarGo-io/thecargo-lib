@@ -76,6 +76,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "sip_credential",
     "power_dialer",
     "company_info",
+    "audit",
     "dashboard",
     "insight",
     "shipment_reason",
@@ -178,6 +179,7 @@ GROUPS: Final[list[dict]] = [
             {"key": "team", "label": "Teams"},
             {"key": "role", "label": "Roles"},
             {"key": "company_info", "label": "Company Info"},
+            {"key": "audit", "label": "Audit"},
         ],
     },
 ]
