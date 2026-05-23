@@ -57,7 +57,6 @@ RESOURCES: Final[tuple[str, ...]] = (
     "customer",
     "carrier",
     "task",
-    "billing",
     "notification",
     "template",
     "loadboard",
@@ -160,7 +159,6 @@ GROUPS: Final[list[dict]] = [
     {
         "title": "BILLING",
         "resources": [
-            {"key": "billing", "label": "Billing"},
             {"key": "payment_method", "label": "Payment Methods"},
             {"key": "credit_card", "label": "Credit Cards"},
         ],

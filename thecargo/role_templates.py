@@ -28,7 +28,6 @@ MANAGER: Final[dict[str, str]] = {
             "customer",
             "carrier",
             "task",
-            "billing",
             "contract",
             "provider",
             "notification",
