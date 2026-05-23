@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, UploadFile
 
+from thecargo.public_storage import upload_public_bytes
 from thecargo.storage import upload_bytes
 
 _log = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ async def upload_to_storage(
     allowed_exact: frozenset[str] = frozenset(),
     allowed_prefixes: tuple[str, ...] = (),
     max_bytes: int = MAX_BYTES_SMALL,
+    public: bool = False,
 ) -> UploadResult:
     """Validate, sanitize, and stream an :class:`UploadFile` into MinIO.
 
@@ -123,6 +125,13 @@ async def upload_to_storage(
     primitive embedding service-specific knowledge. Pass an allowlist
     preset (``IMAGE_TYPES`` / ``DOCUMENT_TYPES`` / ``PROOF_TYPES``) or a
     custom one; leaving both empty accepts any MIME type.
+
+    Set ``public=True`` to land the bytes in the shared public bucket
+    (anonymous ``GetObject``) instead of the private per-service bucket.
+    The returned URL is then directly fetchable by a browser ``<img>``
+    without a presigned signature — for customer-facing assets like
+    payment-method QR codes. Requires ``init_public_storage`` to have run
+    at service startup.
 
     Storage failures (MinIO unreachable, S3 error) are translated to
     ``502 Bad Gateway`` and logged - the bytes never landed, so this is
@@ -147,8 +156,9 @@ async def upload_to_storage(
     safe = safe_filename(file.filename)
     storage_path = path_builder(safe, content_type)
 
+    writer = upload_public_bytes if public else upload_bytes
     try:
-        url = await asyncio.to_thread(upload_bytes, storage_path, raw, content_type)
+        url = await asyncio.to_thread(writer, storage_path, raw, content_type)
     except Exception as exc:
         _log.error("MinIO upload failed for %s: %s", storage_path, exc)
         raise HTTPException(502, "Object storage unavailable") from exc
