@@ -78,8 +78,29 @@ class Auditable:
 
     __audit_resource__: ClassVar[str]
     __audit_ignore__: ClassVar[frozenset[str]] = frozenset({"updated_at"})
+    __audit_significant__: ClassVar[frozenset[str]] = frozenset()
+    __audit_lifecycle_field__: ClassVar[str | None] = None
 
     def __audit_label__(self) -> str | None:
+        return None
+
+    def __audit_root__(self) -> tuple[str, str] | None:
+        """Aggregate root this entity belongs to, as ``(resource, id)``.
+
+        Powers the per-aggregate timeline: a shipment's History view
+        must surface edits to the shipment *and* its child rows (stops,
+        vehicles, toolbar notes/tasks/files), which are separate audit
+        resources with their own ids. Each child declares its owning
+        shipment here so the timeline query can pull the whole story
+        with one indexed ``(root_resource, root_id)`` lookup instead of
+        joining across services.
+
+        Returning ``None`` means the entity *is* its own root (the
+        shipment row itself, a standalone customer, …) and the builder
+        falls back to ``(resource, id)``. The id is read from an
+        already-loaded FK column so this never triggers lazy IO inside
+        the flush.
+        """
         return None
 
 
@@ -181,6 +202,61 @@ def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
     return old, new, changed
 
 
+def _user_obj(ctx) -> dict[str, Any]:
+    """The acting principal as a nested object on the event.
+
+    Denormalised at write time from the JWT-derived context so the
+    read path never has to call the auth service to render "who did
+    this". ``type`` is ``user`` for an authenticated request, falling
+    back to ``system`` for background jobs / service-to-service writes
+    that carry no token. ``first_name``/``last_name`` are captured
+    as-they-were so renaming a user later doesn't rewrite history.
+    """
+    u = ctx.user
+    return {
+        "id": str(u.id) if u.id is not None else None,
+        "email": u.email,
+        "first_name": u.first_name,
+        "last_name": u.last_name,
+        "type": u.type,
+    }
+
+
+def _root_of(obj: "Auditable", resource: str, resource_id: str | None) -> tuple[str, str | None]:
+    """Resolve the aggregate-root key, falling back to the entity itself."""
+    try:
+        root = obj.__audit_root__()
+    except Exception:
+        root = None
+    if root is not None:
+        return root[0], str(root[1]) if root[1] is not None else None
+    return resource, resource_id
+
+
+def _significant(obj: "Auditable", changed: list[str] | None) -> list[str]:
+    """Subset of changed columns the model flags business-critical."""
+    if not changed:
+        return []
+    return sorted(set(changed) & obj.__audit_significant__)
+
+
+def _lifecycle(obj: "Auditable", old: dict | None, new: dict | None, changed: list[str] | None) -> dict | None:
+    """Status/stage transition extracted from an ordinary update.
+
+    Lets the UI render a lifecycle move ("moved to Posted") distinctly
+    from a field edit without inventing a new stored event type — it
+    stays an ``update``, just annotated.
+    """
+    field = obj.__audit_lifecycle_field__
+    if not field or not changed or field not in changed:
+        return None
+    return {
+        "field": field,
+        "from": (old or {}).get(field),
+        "to": (new or {}).get(field),
+    }
+
+
 def _build_payload(
     action: str,
     obj: "Auditable",
@@ -203,17 +279,23 @@ def _build_payload(
         label = None
     org_id = getattr(obj, "organization_id", None)
     obj_id = getattr(obj, "id", None)
+    resource = obj.__audit_resource__
+    resource_id = str(obj_id) if obj_id is not None else None
+    root_resource, root_id = _root_of(obj, resource, resource_id)
     return {
         "audit_id": str(uuid4()),
         "service": _SERVICE_NAME or "unknown",
         "organization_id": str(org_id) if org_id is not None else None,
-        "actor_id": str(ctx.actor_id) if ctx.actor_id is not None else None,
-        "actor_email": ctx.actor_email,
-        "resource": obj.__audit_resource__,
-        "resource_id": str(obj_id) if obj_id is not None else None,
+        "user": _user_obj(ctx),
+        "resource": resource,
+        "resource_id": resource_id,
         "resource_label": (label[:500] if label else None),
+        "root_resource": root_resource,
+        "root_id": root_id,
         "action": action,
         "changed_fields": changed,
+        "significant_fields": _significant(obj, changed),
+        "lifecycle_transition": _lifecycle(obj, old_data, new_data, changed),
         "old_data": old_data,
         "new_data": new_data,
         "request_id": str(ctx.request_id) if ctx.request_id is not None else None,
@@ -231,9 +313,13 @@ async def emit_audit_event(
     action: str,
     resource_label: str | None = None,
     organization_id: str | None = None,
+    root_resource: str | None = None,
+    root_id: str | None = None,
     old_data: dict | None = None,
     new_data: dict | None = None,
     changed_fields: list[str] | None = None,
+    significant_fields: list[str] | None = None,
+    lifecycle_transition: dict | None = None,
 ) -> None:
     """Publish an audit event from a non-ORM call site.
 
@@ -254,13 +340,16 @@ async def emit_audit_event(
         "audit_id": str(uuid4()),
         "service": service or _SERVICE_NAME or "unknown",
         "organization_id": organization_id,
-        "actor_id": str(ctx.actor_id) if ctx.actor_id is not None else None,
-        "actor_email": ctx.actor_email,
+        "user": _user_obj(ctx),
         "resource": resource,
         "resource_id": resource_id,
         "resource_label": (resource_label[:500] if resource_label else None),
+        "root_resource": root_resource or resource,
+        "root_id": root_id or resource_id,
         "action": action,
         "changed_fields": changed_fields,
+        "significant_fields": significant_fields or [],
+        "lifecycle_transition": lifecycle_transition,
         "old_data": old_data,
         "new_data": new_data,
         "request_id": str(ctx.request_id) if ctx.request_id is not None else None,

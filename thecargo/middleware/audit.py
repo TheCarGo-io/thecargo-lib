@@ -4,7 +4,7 @@ import jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from thecargo.context import AuditContext, set_audit_context
+from thecargo.context import AuditContext, AuditUser, set_audit_context
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -12,6 +12,25 @@ def _get_client_ip(request: Request) -> str | None:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+def _names(payload: dict) -> tuple[str | None, str | None]:
+    """(first_name, last_name) from the JWT, captured at action time.
+
+    Prefers explicit ``first_name``/``last_name`` claims; otherwise
+    splits a single ``name`` claim (first token → first name, the rest
+    → last name). Returns ``(None, None)`` when the token carries no
+    name so the read path can fall back to the email.
+    """
+    first = payload.get("first_name")
+    last = payload.get("last_name")
+    if first or last:
+        return (str(first).strip() or None if first else None), (str(last).strip() or None if last else None)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return None, None
+    parts = name.split()
+    return parts[0], (" ".join(parts[1:]) or None)
 
 
 def _resolve_request_id(incoming: str | None) -> UUID:
@@ -48,8 +67,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if auth.startswith("Bearer "):
             try:
                 payload = jwt.decode(auth[7:], self.jwt_secret, algorithms=[self.jwt_algorithm])
-                ctx.actor_id = UUID(payload["user_id"]) if payload.get("user_id") else None
-                ctx.actor_email = payload.get("email")
+                first_name, last_name = _names(payload)
+                ctx.user = AuditUser(
+                    id=UUID(payload["user_id"]) if payload.get("user_id") else None,
+                    email=payload.get("email"),
+                    first_name=first_name,
+                    last_name=last_name,
+                    type="user",
+                )
                 ctx.organization_id = UUID(payload["org_id"]) if payload.get("org_id") else None
             except Exception:
                 pass

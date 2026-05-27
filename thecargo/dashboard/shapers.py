@@ -630,13 +630,20 @@ _ACTIVITY_PALETTE = [
 _ACTIVITY_VERB = {"create": "created", "update": "updated", "delete": "deleted"}
 
 
-def _activity_color(actor_id: str | None, actor_email: str | None) -> str:
-    seed = (actor_id or actor_email or "system").encode()
+def _ev_user(ev: dict) -> tuple[str | None, str | None, str | None]:
+    """(id, email, name) from the nested ``user`` object."""
+    user = ev.get("user") or {}
+    name = f"{user.get('first_name') or ''} {user.get('last_name') or ''}".strip()
+    return user.get("id"), user.get("email"), (name or None)
+
+
+def _activity_color(user_id: str | None, user_email: str | None) -> str:
+    seed = (user_id or user_email or "system").encode()
     h = int.from_bytes(hashlib.md5(seed).digest()[:4], "big")
     return _ACTIVITY_PALETTE[h % len(_ACTIVITY_PALETTE)]
 
 
-def _activity_initials(email: str | None, actor_id: str | None) -> str:
+def _activity_initials(email: str | None, user_id: str | None) -> str:
     if email:
         local = email.split("@", 1)[0]
         parts = [p for p in local.replace(".", " ").replace("_", " ").split() if p]
@@ -644,17 +651,18 @@ def _activity_initials(email: str | None, actor_id: str | None) -> str:
             return (parts[0][0] + parts[1][0]).upper()
         if parts:
             return parts[0][:2].upper()
-    if actor_id:
-        return actor_id[:2].upper()
+    if user_id:
+        return user_id[:2].upper()
     return "··"
 
 
 def _activity_text(ev: dict) -> str:
-    actor = html.escape(ev.get("actor_email") or "Someone")
+    _, email, name = _ev_user(ev)
+    who = html.escape(name or email or "Someone")
     verb = _ACTIVITY_VERB.get(ev.get("action") or "", "modified")
     resource = (ev.get("resource") or "record").replace("_", " ")
     label = ev.get("resource_label") or ev.get("resource_id") or resource
-    return f'<b>{actor}</b> {verb} <a href="#">{html.escape(str(label))}</a>'
+    return f'<b>{who}</b> {verb} <a href="#">{html.escape(str(label))}</a>'
 
 
 def _activity_meta(ev: dict) -> str:
@@ -670,10 +678,11 @@ def shape_activity(raw: dict) -> DashboardActivityResponse:
     items_raw = raw.get("items", []) if isinstance(raw, dict) else []
     items: list[ActivityListItem] = []
     for ev in items_raw:
+        ev_id, ev_email, _ = _ev_user(ev)
         items.append(
             ActivityListItem(
-                actor=_activity_initials(ev.get("actor_email"), ev.get("actor_id")),
-                color=_activity_color(ev.get("actor_id"), ev.get("actor_email")),
+                actor=_activity_initials(ev_email, ev_id),
+                color=_activity_color(ev_id, ev_email),
                 text=_activity_text(ev),
                 meta=_activity_meta(ev),
                 time=_relative_age(ev.get("created_at", "")),
