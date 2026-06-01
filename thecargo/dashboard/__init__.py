@@ -9,7 +9,13 @@ expects, so every service emits the same shape without duplicating code.
 
 from thecargo.dashboard.period import DateWindow, Period, ResolvedPeriod, resolve_period
 from thecargo.dashboard.schemas import (
+    ActivityActor,
+    ActivityChange,
+    ActivityFeedResponse,
+    ActivityItem,
+    ActivityLifecycle,
     ActivityListItem,
+    ActivityResource,
     CalendarItemKind,
     CalendarListItem,
     DashboardActivityResponse,
@@ -45,7 +51,13 @@ from thecargo.dashboard.shapers import (
 )
 
 __all__ = [
+    "ActivityActor",
+    "ActivityChange",
+    "ActivityFeedResponse",
+    "ActivityItem",
+    "ActivityLifecycle",
     "ActivityListItem",
+    "ActivityResource",
     "CalendarItemKind",
     "CalendarListItem",
     "DashboardActivityResponse",

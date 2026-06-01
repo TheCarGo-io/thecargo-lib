@@ -7,17 +7,20 @@ so it can be reused from any service or unit-tested without IO.
 from __future__ import annotations
 
 import calendar as _cal
-import hashlib
 import html
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from thecargo.dashboard.period import ResolvedPeriod
 from thecargo.dashboard.schemas import (
-    ActivityListItem,
+    ActivityActor,
+    ActivityChange,
+    ActivityFeedResponse,
+    ActivityItem,
+    ActivityLifecycle,
+    ActivityResource,
     CalendarItemKind,
     CalendarListItem,
-    DashboardActivityResponse,
     DashboardCalendarResponse,
     DashboardChartAverage,
     DashboardChartFoot,
@@ -615,80 +618,66 @@ def shape_calendar(raw: dict) -> DashboardCalendarResponse:
     return DashboardCalendarResponse(date_label=today_label, items=items)
 
 
-_ACTIVITY_PALETTE = [
-    "#2fb344",
-    "#214690",
-    "#1c7ed6",
-    "#ae3ec9",
-    "#fab005",
-    "#fd7e14",
-    "#d63939",
-    "#1f7a3a",
-    "#5c7cfa",
-    "#7048e8",
-]
-_ACTIVITY_VERB = {"create": "created", "update": "updated", "delete": "deleted"}
+def _activity_changes(ev: dict) -> list[ActivityChange]:
+    """Pair ``changed_fields`` with their ``old_data``/``new_data`` values.
 
-
-def _ev_user(ev: dict) -> tuple[str | None, str | None, str | None]:
-    """(id, email, name) from the nested ``user`` object."""
-    user = ev.get("user") or {}
-    name = f"{user.get('first_name') or ''} {user.get('last_name') or ''}".strip()
-    return user.get("id"), user.get("email"), (name or None)
-
-
-def _activity_color(user_id: str | None, user_email: str | None) -> str:
-    seed = (user_id or user_email or "system").encode()
-    h = int.from_bytes(hashlib.md5(seed).digest()[:4], "big")
-    return _ACTIVITY_PALETTE[h % len(_ACTIVITY_PALETTE)]
-
-
-def _activity_initials(email: str | None, user_id: str | None) -> str:
-    if email:
-        local = email.split("@", 1)[0]
-        parts = [p for p in local.replace(".", " ").replace("_", " ").split() if p]
-        if len(parts) >= 2:
-            return (parts[0][0] + parts[1][0]).upper()
-        if parts:
-            return parts[0][:2].upper()
-    if user_id:
-        return user_id[:2].upper()
-    return "··"
-
-
-def _activity_text(ev: dict) -> str:
-    _, email, name = _ev_user(ev)
-    who = html.escape(name or email or "Someone")
-    verb = _ACTIVITY_VERB.get(ev.get("action") or "", "modified")
-    resource = (ev.get("resource") or "record").replace("_", " ")
-    label = ev.get("resource_label") or ev.get("resource_id") or resource
-    return f'<b>{who}</b> {verb} <a href="#">{html.escape(str(label))}</a>'
-
-
-def _activity_meta(ev: dict) -> str:
-    service = ev.get("service") or ""
+    Each entry is the raw stored value on both sides — no formatting,
+    no labelling, no truncation. The client owns all of that. Create
+    and delete rows carry no field diff (``changed_fields`` is null),
+    so this returns an empty list and the action alone conveys the row.
+    """
     changed = ev.get("changed_fields") or []
-    if changed:
-        return f"{service} · {', '.join(str(c) for c in changed[:3])}"
-    return service
+    old_data = ev.get("old_data") or {}
+    new_data = ev.get("new_data") or {}
+    return [ActivityChange(field=f, old=old_data.get(f), new=new_data.get(f)) for f in changed]
 
 
-def shape_activity(raw: dict) -> DashboardActivityResponse:
-    """Build the activity feed response from audit's list payload."""
+def _activity_lifecycle(ev: dict) -> ActivityLifecycle | None:
+    """Surface a stage/status transition as structured data, if present."""
+    raw = ev.get("lifecycle_transition")
+    if not isinstance(raw, dict) or not raw.get("field"):
+        return None
+    return ActivityLifecycle.model_validate({"field": raw["field"], "from": raw.get("from"), "to": raw.get("to")})
+
+
+def _activity_item(ev: dict) -> ActivityItem:
+    """Map one stored audit document to a structured feed item."""
+    user = ev.get("user") or {}
+    return ActivityItem(
+        id=str(ev.get("audit_id") or ev.get("id") or ""),
+        created_at=str(ev.get("created_at") or ""),
+        service=ev.get("service") or "",
+        action=ev.get("action") or "",
+        actor=ActivityActor(
+            id=user.get("id"),
+            email=user.get("email"),
+            first_name=user.get("first_name"),
+            last_name=user.get("last_name"),
+            type=user.get("type"),
+        ),
+        resource=ActivityResource(
+            type=ev.get("resource") or "",
+            id=ev.get("resource_id"),
+            label=ev.get("resource_label"),
+        ),
+        changes=_activity_changes(ev),
+        significant_fields=ev.get("significant_fields") or [],
+        lifecycle=_activity_lifecycle(ev),
+    )
+
+
+def shape_activity(raw: dict) -> ActivityFeedResponse:
+    """Shape audit's list payload into structured, unformatted feed items.
+
+    Deliberately returns raw data (actor / resource / field diffs /
+    lifecycle / ISO timestamp) rather than pre-rendered text: the
+    frontend owns copy, localisation, money/date formatting, field
+    labels, avatar initials/colour, and relative time. Everything the
+    client needs is already on the audit document, so this is a thin,
+    side-effect-free mapping.
+    """
     items_raw = raw.get("items", []) if isinstance(raw, dict) else []
-    items: list[ActivityListItem] = []
-    for ev in items_raw:
-        ev_id, ev_email, _ = _ev_user(ev)
-        items.append(
-            ActivityListItem(
-                actor=_activity_initials(ev_email, ev_id),
-                color=_activity_color(ev_id, ev_email),
-                text=_activity_text(ev),
-                meta=_activity_meta(ev),
-                time=_relative_age(ev.get("created_at", "")),
-            )
-        )
-    return DashboardActivityResponse(date_label="last 24h", items=items)
+    return ActivityFeedResponse(date_label="last 24h", items=[_activity_item(ev) for ev in items_raw])
 
 
 _TARGET_METRIC_LABELS = {"charged": "Charged", "dispatched": "Dispatched"}

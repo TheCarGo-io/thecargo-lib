@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -327,12 +328,149 @@ class DashboardActivityResponse(BaseModel):
                 "date_label": "last 24h",
                 "items": [
                     {
-                        "actor": "SC",
+                        "actor": "JR",
                         "color": "#214690",
-                        "text": '<b>sarah@thecargo.io</b> updated <a href="#">O-2050</a>',
-                        "meta": "shipment · status, customer_id",
+                        "text": '<b>Jessica Ramirez</b> updated <a href="#">Shipment HG10115</a>',
+                        "meta": "shipment · Pickup date 2026-06-30 · Delivery date 2026-06-30 · Available from 2026-05-10 → 2026-05-11",
                         "time": "12m",
-                    }
+                    },
+                    {
+                        "actor": "AM",
+                        "color": "#2fb344",
+                        "text": '<b>Anna Morrison</b> moved <a href="#">Order #HG10118</a> to Dispatched',
+                        "meta": "shipment · Carrier pay $1,100 → $1,250",
+                        "time": "1h",
+                    },
+                ],
+            }
+        }
+    )
+
+
+class ActivityActor(BaseModel):
+    """Who performed the action.
+
+    Denormalised from the JWT at write time, so a later rename never
+    rewrites history. ``type`` is ``user`` for an authenticated
+    operator and ``system`` for background / service-to-service writes
+    (where ``id``/``email`` may be null). The client derives avatar
+    initials and colour from these fields itself.
+    """
+
+    id: str | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    type: str | None = Field(None, description="`user` | `system`")
+
+
+class ActivityResource(BaseModel):
+    """The audited entity the event is about."""
+
+    type: str = Field(..., description="Resource kind, e.g. `shipment`, `payment`, `tag`")
+    id: str | None = None
+    label: str | None = Field(None, description="Human label captured at write time, e.g. `Shipment HG10115`")
+
+
+class ActivityChange(BaseModel):
+    """One field-level diff.
+
+    ``old``/``new`` are the raw stored values — strings, numbers,
+    booleans, ISO dates, or name lists (e.g. ``tags``). Foreign-key
+    columns carry a UUID; the client decides how to label and format
+    each field. ``null`` on either side means the field was unset.
+    """
+
+    field: str
+    old: Any = None
+    new: Any = None
+
+
+class ActivityLifecycle(BaseModel):
+    """Stage/status transition extracted from an update, when present."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    field: str = Field(..., description="`stage` or `status`")
+    from_: Any = Field(None, alias="from")
+    to: Any = None
+
+
+class ActivityItem(BaseModel):
+    """One raw activity row — the client renders text, avatar, and relative time.
+
+    Carries the structured audit record (actor, resource, field diffs,
+    lifecycle move, timestamp) instead of a pre-formatted line, so the
+    frontend owns all copy, localisation, money/date formatting, and
+    field labelling.
+    """
+
+    id: str = Field(..., description="Stable audit event id")
+    created_at: str = Field(..., description="ISO-8601 timestamp; the client renders relative time")
+    service: str = Field(..., description="Emitting service, e.g. `shipment`, `billing`")
+    action: str = Field(..., description="`create` | `update` | `delete`")
+    actor: ActivityActor
+    resource: ActivityResource
+    changes: list[ActivityChange] = Field(
+        default_factory=list, description="Field-level diffs; empty for create / delete rows"
+    )
+    significant_fields: list[str] = Field(
+        default_factory=list, description="Subset of changed fields the model flags business-critical"
+    )
+    lifecycle: ActivityLifecycle | None = None
+
+
+class ActivityFeedResponse(BaseModel):
+    date_label: str = Field("last 24h", description="Header sub-text")
+    items: list[ActivityItem]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "date_label": "last 24h",
+                "items": [
+                    {
+                        "id": "9f1c2e3a-0000-4000-8000-000000000001",
+                        "created_at": "2026-06-01T17:18:00-04:00",
+                        "service": "shipment",
+                        "action": "update",
+                        "actor": {
+                            "id": "ecb1ca08-9e8f-4270-ae6b-0ae1786de390",
+                            "email": "jessica@thecargo.io",
+                            "first_name": "Jessica",
+                            "last_name": "Ramirez",
+                            "type": "user",
+                        },
+                        "resource": {
+                            "type": "shipment",
+                            "id": "b2eb79be-4312-46d2-9a4b-1d48eb2546c1",
+                            "label": "Shipment HG10115",
+                        },
+                        "changes": [
+                            {"field": "estimated_pickup_at", "old": None, "new": "2026-06-30T00:00:00"},
+                            {"field": "estimated_delivery_at", "old": None, "new": "2026-06-30T00:00:00"},
+                            {"field": "first_available_date", "old": "2026-05-10", "new": "2026-05-11"},
+                        ],
+                        "significant_fields": [],
+                        "lifecycle": None,
+                    },
+                    {
+                        "id": "9f1c2e3a-0000-4000-8000-000000000002",
+                        "created_at": "2026-06-01T16:05:00-04:00",
+                        "service": "shipment",
+                        "action": "update",
+                        "actor": {
+                            "id": "a11b...",
+                            "email": "anna@thecargo.io",
+                            "first_name": "Anna",
+                            "last_name": "Morrison",
+                            "type": "user",
+                        },
+                        "resource": {"type": "shipment", "id": "c3d4...", "label": "Order #HG10118"},
+                        "changes": [{"field": "carrier_pay", "old": "1100.00", "new": "1250.00"}],
+                        "significant_fields": ["carrier_pay"],
+                        "lifecycle": {"field": "status", "from": "not_signed", "to": "dispatched"},
+                    },
                 ],
             }
         }

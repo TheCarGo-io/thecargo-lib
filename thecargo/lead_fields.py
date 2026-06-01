@@ -15,6 +15,7 @@ catalog also defines how a reviewed field feeds the live parser.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 
 DATE_FORMATS = [
@@ -234,3 +235,137 @@ def blank_lead_preview() -> dict:
         for spec in LEAD_FIELD_CATALOG
     ]
     return {"fields": fields, "summary": {"matched": 0, "review": 0, "not_found": len(fields)}}
+
+
+def extract_lines(text: str | None) -> list[str]:
+    """Keep only ``key: value`` lines, normalized and stripped.
+
+    The parser matches whole lines, so anything without a colon separator
+    (greetings, signatures, blank lines) is dropped up front to cut false
+    positives before matching.
+    """
+    text = (text or "").strip().replace("\r\n", "\n")
+    lines = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if line and re.match(r".+?:.+", line):
+            lines.append(line)
+    return lines
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    """One catalog row in the compact shape the matcher iterates over."""
+
+    key: str
+    section: str
+    label: str
+    item_name: str
+
+
+FIELD_CATALOG: list[FieldSpec] = [
+    FieldSpec(spec["key"], spec["section"], spec["label"], spec["item_name"]) for spec in LEAD_FIELD_CATALOG
+]
+
+ITEM_TO_FIELD: dict[str, str] = {spec.item_name: spec.key for spec in FIELD_CATALOG}
+
+DEFAULT_LABELS: dict[str, list[str]] = {spec["key"]: spec.get("labels", []) for spec in LEAD_FIELD_CATALOG}
+
+
+def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
+    """Group a provider's confirmed keyword values by review-screen field.
+
+    ``parsing_values`` is the ``[{value, item_name}]`` shape; only item names
+    that map onto a catalog field are kept (multi-vehicle ``vehicle2_*`` etc.
+    are irrelevant to the single-vehicle review grid).
+    """
+    grouped: dict[str, list[str]] = {}
+    for pv in parsing_values:
+        field_key = ITEM_TO_FIELD.get(pv.get("item_name", ""))
+        if not field_key:
+            continue
+        value = (pv.get("value") or "").strip().lower()
+        if value:
+            grouped.setdefault(field_key, []).append(value)
+    return grouped
+
+
+def _find_value(
+    lines: list[str], labels: list[str], used: set[int]
+) -> tuple[str | None, str | None, str | None, int | None]:
+    """Return the first unused line whose text starts with one of ``labels``.
+
+    Labels are tried longest-first so a specific label (``vehicle type``)
+    wins over a generic one (``type``) on the same line. Returns the
+    extracted value, the source line, the label that matched (persisted as
+    the parse key on activation), and the line index so the caller can mark
+    it consumed and stop two fields claiming the same line.
+    """
+    ordered = sorted(labels, key=len, reverse=True)
+    for idx, line in enumerate(lines):
+        if idx in used:
+            continue
+        line_lower = line.lower()
+        for label in ordered:
+            if line_lower.startswith(label):
+                value = line[len(label) :].lstrip(" :\t-").strip()
+                if value:
+                    return value, line, label, idx
+    return None, None, None, None
+
+
+def parse_email_fields(text: str | None, parsing_values: list[dict] | None = None) -> dict:
+    """Grade a raw email body against every catalog field for the review screen.
+
+    A provider's confirmed keyword values take precedence; where it has none
+    the built-in :data:`LEAD_FIELD_CATALOG` ``labels`` bootstrap the first
+    guess. Each field is graded via :func:`field_status`:
+
+    * ``matched`` — a value was extracted and passed its type check
+    * ``review`` — a value was extracted but failed validation (e.g. a ship
+      date of "ASAP", a non-numeric zip) and needs a human glance
+    * ``not_found`` — no line matched; the dispatcher adds it manually
+
+    Returns ``{"fields": [...], "summary": {...}}`` ready to persist as a
+    provider's ``intake_preview`` and render verbatim. This is the single
+    source of truth shared by the communication email pipeline, the shipment
+    ``/api/v1/providers/parse-preview`` endpoint and the admin provider
+    editor, so all three grade an identical email identically.
+    """
+    lines = extract_lines(text or "")
+    custom = _custom_labels_by_field(parsing_values or [])
+    used: set[int] = set()
+
+    fields: list[dict] = []
+    counts = {"matched": 0, "review": 0, "not_found": 0}
+
+    for spec in FIELD_CATALOG:
+        labels = custom.get(spec.key) or DEFAULT_LABELS.get(spec.key, [])
+        value, source, matched_label, idx = _find_value(lines, labels, used)
+
+        if value is None:
+            status, hint = "not_found", "no match found in email"
+        else:
+            used.add(idx)
+            status = field_status(spec.key, value)
+            if status == "matched":
+                hint = f'matched from "{source}"'
+            else:
+                hint = f'low confidence — matched "{value}"'
+
+        counts[status] += 1
+        fields.append(
+            {
+                "key": spec.key,
+                "section": spec.section,
+                "label": spec.label,
+                "item_name": spec.item_name,
+                "value": value,
+                "source": source,
+                "matched_label": matched_label,
+                "status": status,
+                "hint": hint,
+            }
+        )
+
+    return {"fields": fields, "summary": counts}
