@@ -58,7 +58,7 @@ class CommunicationClient(ServiceClient):
     async def send_email_by_template(
         self,
         *,
-        key: str,
+        category: str,
         to: str | list[str],
         context: dict[str, Any] | None = None,
         organization_id: UUID | str | None = None,
@@ -72,13 +72,15 @@ class CommunicationClient(ServiceClient):
     ) -> dict:
         """Send an email rendered from a system or org template.
 
-        ``key`` is the slug seeded in the templates table (e.g.
-        ``verify_code``, ``payment_invoice``). ``organization_id`` is required
-        for org-scoped templates and recommended for system templates so
-        the per-org override (if any) wins over the platform fallback.
+        ``category`` is the purpose slug seeded in the templates table
+        (e.g. ``verify_code``, ``payment_invoice``); the org's
+        ``is_default`` row for that category wins, falling back to the
+        platform default. ``organization_id`` is required for org-scoped
+        templates and recommended for system templates so the per-org
+        default (if any) wins over the platform fallback.
         """
         payload = {
-            "template_key": key,
+            "category": category,
             "to": [to] if isinstance(to, str) else list(to),
             "organization_id": str(organization_id) if organization_id else None,
             "context": context or {},
@@ -145,7 +147,7 @@ class CommunicationClient(ServiceClient):
     @staticmethod
     async def send_email_by_template_async(
         *,
-        key: str,
+        category: str,
         to: str | list[str],
         context: dict[str, Any] | None = None,
         organization_id: UUID | str | None = None,
@@ -170,7 +172,7 @@ class CommunicationClient(ServiceClient):
         ``email.send.failed`` if you need a reaction.
         """
         payload = {
-            "template_key": key,
+            "category": category,
             "to": [to] if isinstance(to, str) else list(to),
             "organization_id": str(organization_id) if organization_id else None,
             "context": context or {},
