@@ -222,6 +222,22 @@ def _user_obj(ctx) -> dict[str, Any]:
     }
 
 
+def _resolve_org_id(explicit: Any, ctx) -> str | None:
+    """Tenant scope for the audit row, as a string id or ``None``.
+
+    Prefers an ``organization_id`` carried on the row (or passed by a
+    non-ORM caller); falls back to the acting principal's org from the
+    request context. Child aggregates that don't denormalise the column
+    — shipment stops, vehicles — would otherwise emit
+    ``organization_id: null`` even on a JWT-authenticated edit, which
+    drops them out of every tenant-scoped audit query. The context org
+    is the JWT ``org_id`` the editor acted under, so it's the correct
+    owner for these rows.
+    """
+    org = explicit if explicit is not None else ctx.organization_id
+    return str(org) if org is not None else None
+
+
 def _root_of(obj: "Auditable", resource: str, resource_id: str | None) -> tuple[str, str | None]:
     """Resolve the aggregate-root key, falling back to the entity itself."""
     try:
@@ -285,7 +301,7 @@ def _build_payload(
     return {
         "audit_id": str(uuid4()),
         "service": _SERVICE_NAME or "unknown",
-        "organization_id": str(org_id) if org_id is not None else None,
+        "organization_id": _resolve_org_id(org_id, ctx),
         "user": _user_obj(ctx),
         "resource": resource,
         "resource_id": resource_id,
@@ -339,7 +355,7 @@ async def emit_audit_event(
     payload = {
         "audit_id": str(uuid4()),
         "service": service or _SERVICE_NAME or "unknown",
-        "organization_id": organization_id,
+        "organization_id": _resolve_org_id(organization_id, ctx),
         "user": _user_obj(ctx),
         "resource": resource,
         "resource_id": resource_id,
