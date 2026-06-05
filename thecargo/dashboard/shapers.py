@@ -1,9 +1,3 @@
-"""
-Pure shapers — turn raw service data into the response models the dashboard
-frontend renders. Every function in here is deterministic and side-effect-free
-so it can be reused from any service or unit-tested without IO.
-"""
-
 from __future__ import annotations
 
 import calendar as _cal
@@ -45,7 +39,6 @@ ORG_TZ = ZoneInfo("America/New_York")
 
 
 def greeting_for(now: datetime) -> str:
-    """Return 'Good morning' / 'Good afternoon' / 'Good evening' for a local datetime."""
     hour = now.hour
     if hour < 12:
         return "Good morning"
@@ -243,12 +236,6 @@ def shape_performance(
     resolved: ResolvedPeriod,
     scope_label: str,
 ) -> DashboardPerformanceResponse:
-    """Build the Performance panel response.
-
-    `raw` matches the structure returned by shipment's
-    `POST /api/internal/analytics/aggregates`:
-    `{"current": {...}, "prior": {...}, "daily": [{"bucket_date", "charged_cents", "dispatched_revenue_cents"}, ...]}`.
-    """
     daily_rows = [
         {
             "bucket_date": date.fromisoformat(r["bucket_date"])
@@ -275,7 +262,6 @@ def shape_performance(
 
 
 def shape_pipeline(raw: dict, resolved: ResolvedPeriod) -> DashboardPipelineResponse:
-    """Build the Pipeline panel response from the same aggregates payload as `shape_performance`."""
     cur = raw.get("current", {}) or {}
     prv = raw.get("prior", {}) or {}
     cols = [
@@ -400,7 +386,6 @@ def _today_pill(estimated_pickup_at: str | None) -> str:
 
 
 def shape_queue(raw: dict) -> DashboardQueueResponse:
-    """Build the action-queue response from shipment's `/api/internal/dashboard/queue` payload."""
     na = raw.get("needs_attention", {}) or {}
     na_items = [
         QueueListItem(left=_needs_attention_left(it), right=_relative_age(it.get("updated_at")))
@@ -452,7 +437,6 @@ _TASK_PILL_CLASS = {"phone": "call", "payment": "deposit", "general": "followup"
 
 
 def _parse_iso(value: str | datetime | None) -> datetime | None:
-    """Tolerant ISO/datetime parser used by the calendar shaper."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -473,7 +457,6 @@ def _parse_iso_date(value: str | None) -> date | None:
 
 
 def _parse_iso_time(value: str | None):
-    """Parse `HH:MM[:SS[.ffffff]]` or a full ISO string and return a `time` (or `None`)."""
     if value is None:
         return None
     text = str(value)
@@ -492,7 +475,6 @@ def _parse_iso_time(value: str | None):
 
 
 def _task_at(task: dict) -> datetime | None:
-    """Combine the task's local `date` + `start_time` into an aware UTC datetime."""
     d = _parse_iso_date(task.get("date"))
     if d is None:
         return None
@@ -594,14 +576,6 @@ def _follow_up_summary_row(summary: dict) -> CalendarListItem:
 
 
 def shape_calendar(raw: dict) -> DashboardCalendarResponse:
-    """Build the calendar response from the shipment service's per-day payload.
-
-    `raw` carries three sections — `stops` (pickup / delivery from
-    `shipment_stops`), `tasks` (today's pending `shipment_tasks`), and an
-    optional `follow_up_summary` aggregate for quotes that still need a
-    follow-up. Stops + timed tasks are interleaved by `at`; the EOD
-    follow-up summary, if present, lands at the bottom.
-    """
     today_label = datetime.now(ORG_TZ).strftime("%b %-d")
     if raw.get("date_label"):
         today_label = str(raw["date_label"])
@@ -619,13 +593,6 @@ def shape_calendar(raw: dict) -> DashboardCalendarResponse:
 
 
 def _activity_changes(ev: dict) -> list[ActivityChange]:
-    """Pair ``changed_fields`` with their ``old_data``/``new_data`` values.
-
-    Each entry is the raw stored value on both sides — no formatting,
-    no labelling, no truncation. The client owns all of that. Create
-    and delete rows carry no field diff (``changed_fields`` is null),
-    so this returns an empty list and the action alone conveys the row.
-    """
     changed = ev.get("changed_fields") or []
     old_data = ev.get("old_data") or {}
     new_data = ev.get("new_data") or {}
@@ -633,7 +600,6 @@ def _activity_changes(ev: dict) -> list[ActivityChange]:
 
 
 def _activity_lifecycle(ev: dict) -> ActivityLifecycle | None:
-    """Surface a stage/status transition as structured data, if present."""
     raw = ev.get("lifecycle_transition")
     if not isinstance(raw, dict) or not raw.get("field"):
         return None
@@ -641,7 +607,6 @@ def _activity_lifecycle(ev: dict) -> ActivityLifecycle | None:
 
 
 def _activity_item(ev: dict) -> ActivityItem:
-    """Map one stored audit document to a structured feed item."""
     user = ev.get("user") or {}
     return ActivityItem(
         id=str(ev.get("audit_id") or ev.get("id") or ""),
@@ -667,15 +632,6 @@ def _activity_item(ev: dict) -> ActivityItem:
 
 
 def shape_activity(raw: dict) -> ActivityFeedResponse:
-    """Shape audit's list payload into structured, unformatted feed items.
-
-    Deliberately returns raw data (actor / resource / field diffs /
-    lifecycle / ISO timestamp) rather than pre-rendered text: the
-    frontend owns copy, localisation, money/date formatting, field
-    labels, avatar initials/colour, and relative time. Everything the
-    client needs is already on the audit document, so this is a thin,
-    side-effect-free mapping.
-    """
     items_raw = raw.get("items", []) if isinstance(raw, dict) else []
     return ActivityFeedResponse(date_label="last 24h", items=[_activity_item(ev) for ev in items_raw])
 
@@ -707,12 +663,6 @@ def _target_pace(current_cents: int, target_cents: int, day_of_month: int, days_
 
 
 def shape_targets(raw: dict, resolved: ResolvedPeriod, month_start: date, month_end: date) -> DashboardTargetsResponse:
-    """Build the Targets panel from a payload of `{year, month, cards, daily}`.
-
-    `cards` must already carry `metric`, `target_cents`, `current_cents` for each tile.
-    The caller is responsible for joining year-targets (analytics) with actual cents
-    (shipment aggregates) before invoking this shaper.
-    """
     year = raw.get("year")
     month = raw.get("month")
     days_in_month = _cal.monthrange(year, month)[1] if year and month else 30

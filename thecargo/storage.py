@@ -49,14 +49,6 @@ def _retry(func: Any) -> Any:
 def init_storage(
     endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False, public_url: str = ""
 ):
-    """Initialize the MinIO client and a separate signing client.
-
-    ``endpoint`` carries server-side traffic (uploads, server-fetches) and
-    can be an internal Docker DNS name for low-latency in-cluster I/O.
-    ``public_url`` defines the host used for presigned URLs handed to
-    browsers — SigV4 binds the Host header into the signature, so signing
-    must happen against the externally reachable hostname.
-    """
     global _client, _signing_client, _bucket, _public_url
     try:
         _client = Minio(endpoint=endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
@@ -134,11 +126,6 @@ def get_public_url(path: str) -> str:
 
 
 def object_path_from_url(url: str) -> str:
-    """Strip the public-URL prefix from a stored file URL.
-
-    ``shipment_files.url`` rows hold ``{public_url}/{bucket}/{path}``.
-    For presigning we need just ``{path}``.
-    """
     if not url:
         return ""
     if _public_url and url.startswith(_public_url):
@@ -151,17 +138,6 @@ def object_path_from_url(url: str) -> str:
 
 @_retry
 def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
-    """Time-limited GET URL for a private-bucket object.
-
-    The URL embeds an HMAC signature so the browser can fetch the
-    bytes directly without server-side proxying. Default 10-minute
-    expiry covers a click-to-download flow without leaving long-lived
-    tokens in browser history.
-
-    Signed via ``_signing_client`` (bound to ``MINIO_PUBLIC_URL``) so the
-    URL host matches what the browser can actually reach. Server-side
-    operations (upload, server-fetch) keep using the internal ``_client``.
-    """
     if _signing_client is None:
         raise RuntimeError("MinIO not initialized")
     from datetime import timedelta
@@ -171,17 +147,6 @@ def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
 
 @_retry
 def download_object_bytes(path: str) -> tuple[bytes, str]:
-    """Server-side fetch of an object's bytes + content-type.
-
-    The bucket is private, so a non-presigned ``shipment_files.url``
-    cannot be re-fetched over plain HTTP — ``httpx.get(url)`` returns
-    ``AccessDenied``. This helper bypasses the URL layer entirely and
-    pulls bytes directly through the authenticated MinIO client.
-
-    Used by the email dispatcher so private attachments still embed
-    cleanly in outbound mail without exposing a presigned URL to the
-    recipient (the bytes ride along inside the MIME envelope).
-    """
     if _client is None:
         raise RuntimeError("MinIO not initialized")
     resp = _client.get_object(_bucket, path)

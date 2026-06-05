@@ -15,13 +15,6 @@ def _get_client_ip(request: Request) -> str | None:
 
 
 def _names(payload: dict) -> tuple[str | None, str | None]:
-    """(first_name, last_name) from the JWT, captured at action time.
-
-    Prefers explicit ``first_name``/``last_name`` claims; otherwise
-    splits a single ``name`` claim (first token → first name, the rest
-    → last name). Returns ``(None, None)`` when the token carries no
-    name so the read path can fall back to the email.
-    """
     first = payload.get("first_name")
     last = payload.get("last_name")
     if first or last:
@@ -34,8 +27,6 @@ def _names(payload: dict) -> tuple[str | None, str | None]:
 
 
 def _resolve_request_id(incoming: str | None) -> UUID:
-    """Reuse a valid caller-supplied X-Request-ID so audit rows across
-    microservices share a correlation id; otherwise mint a fresh one."""
     if not incoming:
         return uuid4()
     try:

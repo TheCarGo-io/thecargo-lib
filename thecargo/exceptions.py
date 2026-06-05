@@ -1,36 +1,9 @@
-"""Typed exceptions for the project's structured error envelope.
-
-Every error response in the platform renders the same shape::
-
-    {
-      "code":    "PAYMENT_NOT_FOUND",     // machine-readable, frontend switches on this
-      "key":     "billing.payment_not_found", // i18n key resolved by Accept-Language
-      "message": "Payment not found",     // translated human text (or fallback)
-      "params":  {"payment_id": "..."},   // structured context for logging / templates
-      "detail":  "Payment not found",     // backward-compat alias of message (legacy clients)
-    }
-
-Handlers (``thecargo.handlers``) take any exception type - including FastAPI's
-own :class:`HTTPException` and Pydantic's :class:`RequestValidationError` -
-and emit this envelope. New code should ``raise <Typed>Exception(...)`` so
-``code``/``key``/``params`` are populated; legacy ``raise HTTPException(...)``
-still works and is converted by the handler with synthetic defaults.
-"""
-
 from __future__ import annotations
 
 from fastapi import HTTPException, status
 
 
 class AppException(HTTPException):
-    """Base for the project's typed exceptions.
-
-    Subclasses set canonical ``code`` / ``key`` defaults and accept a
-    ``params`` payload that lands in the response body. The ``message``
-    falls through ``HTTPException.detail`` so any code that still
-    introspects ``exc.detail`` keeps working.
-    """
-
     def __init__(
         self,
         status_code: int,
@@ -83,13 +56,6 @@ class ForbiddenException(AppException):
 
 
 class NotFoundException(AppException):
-    """Resource not found.
-
-    Project convention maps a missing record to **HTTP 400**, not 404 -
-    see [[feedback_status_code_400_for_missing]] for the rationale. 404
-    is reserved for unknown URL paths (FastAPI's own default).
-    """
-
     def __init__(
         self,
         *,
@@ -136,8 +102,6 @@ class UploadUnsupportedTypeException(AppException):
 
 
 class UpstreamUnavailableException(AppException):
-    """Use when an upstream service (MinIO, Stripe, RingCentral, ...) is unreachable."""
-
     def __init__(self, *, service: str, message: str | None = None) -> None:
         super().__init__(
             status.HTTP_502_BAD_GATEWAY,

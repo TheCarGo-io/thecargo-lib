@@ -17,9 +17,6 @@ def get_jwt_secret() -> str:
 
 
 def set_redis_url(url: str):
-    """Each service calls this at startup so thecargo caching helpers share a
-    single connection pool per process. Downstream libs lazily `from_url`
-    when they first need Redis."""
     global _redis_url, _redis_client
     _redis_url = url
     _redis_client = None  # force re-init next time
@@ -30,7 +27,6 @@ def _get_redis_url() -> str:
 
 
 async def get_redis():
-    """Lazy singleton Redis connection scoped to this process."""
     global _redis_client
     if _redis_client is None:
         import redis.asyncio as aioredis

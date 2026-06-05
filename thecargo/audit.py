@@ -1,25 +1,3 @@
-"""Session-level auto-audit for ORM writes.
-
-Any model that subclasses :class:`Auditable` produces an audit event
-for every create/update/delete that passes through a SQLAlchemy
-session. Events are *published* to RabbitMQ (``audit.{service}.{action}``
-on the ``thecargo.events`` topic exchange) for the dedicated audit
-service to consume and store in MongoDB.
-
-Publish timing is ``after_commit`` — a rolled-back transaction never
-emits an audit event, so audit history stays consistent with the
-data that actually landed in the database. The publish itself is
-fire-and-forget via ``asyncio.create_task``: if RabbitMQ is briefly
-unreachable the event is logged and dropped (acceptable for the
-current test phase; production should add a transactional outbox).
-
-Bulk SQL statements (``session.execute(update(...))`` /
-``session.execute(delete(...))``) bypass the ORM and therefore bypass
-this listener by design — call sites that must audit such operations
-should load rows and use ``session.delete`` / ``obj.field = ...``
-instead.
-"""
-
 import asyncio
 import logging
 import os
@@ -53,29 +31,10 @@ _PENDING_KEY = "_thecargo_audit_pending"
 
 
 def _is_sensitive(column_key: str) -> bool:
-    """Return True if a column should be redacted from audit snapshots.
-
-    Matches both the curated exact-name list and a suffix list so
-    namespaced credentials (``client_secret``, ``cd_client_secret``,
-    ``stripe_api_key`` …) are caught without each model author
-    having to opt in. Add new patterns here, never per-model — audit
-    redaction is one of those things you want enforced centrally.
-    """
     return column_key in _SENSITIVE_EXACT or column_key.endswith(_SENSITIVE_SUFFIXES)
 
 
 class Auditable:
-    """Marker mixin — subclassing opts a model into audit logging.
-
-    Example::
-
-        class Shipment(SoftDeleteModel, Auditable):
-            __audit_resource__ = "shipment"
-
-            def __audit_label__(self) -> str | None:
-                return f"Shipment {self.code}" if self.code else None
-    """
-
     __audit_resource__: ClassVar[str]
     __audit_ignore__: ClassVar[frozenset[str]] = frozenset({"updated_at"})
     __audit_significant__: ClassVar[frozenset[str]] = frozenset()
@@ -85,27 +44,10 @@ class Auditable:
         return None
 
     def __audit_root__(self) -> tuple[str, str] | None:
-        """Aggregate root this entity belongs to, as ``(resource, id)``.
-
-        Powers the per-aggregate timeline: a shipment's History view
-        must surface edits to the shipment *and* its child rows (stops,
-        vehicles, toolbar notes/tasks/files), which are separate audit
-        resources with their own ids. Each child declares its owning
-        shipment here so the timeline query can pull the whole story
-        with one indexed ``(root_resource, root_id)`` lookup instead of
-        joining across services.
-
-        Returning ``None`` means the entity *is* its own root (the
-        shipment row itself, a standalone customer, …) and the builder
-        falls back to ``(resource, id)``. The id is read from an
-        already-loaded FK column so this never triggers lazy IO inside
-        the flush.
-        """
         return None
 
 
 def _jsonify(val: Any) -> Any:
-    """Coerce a Python value into something ``json.dumps`` will accept."""
     if val is None:
         return None
     if isinstance(val, UUID):
@@ -126,7 +68,6 @@ def _jsonify(val: Any) -> Any:
 
 
 def _snapshot(obj: "Auditable") -> dict[str, Any]:
-    """Full column snapshot, skipping expired/unloaded/sensitive fields."""
     state = sa_inspect(obj)
     unloaded = state.unloaded
     ignore = obj.__audit_ignore__
@@ -139,18 +80,6 @@ def _snapshot(obj: "Auditable") -> dict[str, Any]:
 
 
 def _values_equivalent(old: Any, new: Any) -> bool:
-    """Treat type-mismatched but semantically-equal values as the same.
-
-    SQLAlchemy marks an attribute dirty the moment any assignment
-    happens — the API layer commonly hands the ORM a string ("4200.00")
-    where the DB stored a ``Decimal('4200.00')``, and a plain ``==``
-    rejects them as different. Without this normalisation the audit
-    feed fills with no-op ``changed_fields`` entries that confuse the
-    forensic / compliance use case the table exists for. Money-like
-    pairs round-trip through :class:`Decimal`, datetime/date/time
-    pairs through ``str()``, and everything else falls back to a
-    string compare so the helper never raises on exotic types.
-    """
     if old is None and new is None:
         return True
     if old is None and new == "":
@@ -171,16 +100,6 @@ def _values_equivalent(old: Any, new: Any) -> bool:
 
 
 def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
-    """Return only the columns whose value actually changed this flush.
-
-    Combines :meth:`InstanceState.committed_state` (SQLAlchemy's
-    canonical "loaded value before the current mutation") with
-    :func:`_values_equivalent` so an assignment that doesn't actually
-    change the underlying value never lands in ``changed_fields``.
-    The bare ``attributes.get_history(...).has_changes()`` reports
-    "dirty" for every set call regardless of equality and produces
-    the no-op rows where every diff entry has ``old == new``.
-    """
     ignore = obj.__audit_ignore__
     old: dict[str, Any] = {}
     new: dict[str, Any] = {}
@@ -203,15 +122,6 @@ def _diff(obj: "Auditable") -> tuple[dict, dict, list[str]]:
 
 
 def _user_obj(ctx) -> dict[str, Any]:
-    """The acting principal as a nested object on the event.
-
-    Denormalised at write time from the JWT-derived context so the
-    read path never has to call the auth service to render "who did
-    this". ``type`` is ``user`` for an authenticated request, falling
-    back to ``system`` for background jobs / service-to-service writes
-    that carry no token. ``first_name``/``last_name`` are captured
-    as-they-were so renaming a user later doesn't rewrite history.
-    """
     u = ctx.user
     return {
         "id": str(u.id) if u.id is not None else None,
@@ -223,23 +133,11 @@ def _user_obj(ctx) -> dict[str, Any]:
 
 
 def _resolve_org_id(explicit: Any, ctx) -> str | None:
-    """Tenant scope for the audit row, as a string id or ``None``.
-
-    Prefers an ``organization_id`` carried on the row (or passed by a
-    non-ORM caller); falls back to the acting principal's org from the
-    request context. Child aggregates that don't denormalise the column
-    — shipment stops, vehicles — would otherwise emit
-    ``organization_id: null`` even on a JWT-authenticated edit, which
-    drops them out of every tenant-scoped audit query. The context org
-    is the JWT ``org_id`` the editor acted under, so it's the correct
-    owner for these rows.
-    """
     org = explicit if explicit is not None else ctx.organization_id
     return str(org) if org is not None else None
 
 
 def _root_of(obj: "Auditable", resource: str, resource_id: str | None) -> tuple[str, str | None]:
-    """Resolve the aggregate-root key, falling back to the entity itself."""
     try:
         root = obj.__audit_root__()
     except Exception:
@@ -250,19 +148,12 @@ def _root_of(obj: "Auditable", resource: str, resource_id: str | None) -> tuple[
 
 
 def _significant(obj: "Auditable", changed: list[str] | None) -> list[str]:
-    """Subset of changed columns the model flags business-critical."""
     if not changed:
         return []
     return sorted(set(changed) & obj.__audit_significant__)
 
 
 def _lifecycle(obj: "Auditable", old: dict | None, new: dict | None, changed: list[str] | None) -> dict | None:
-    """Status/stage transition extracted from an ordinary update.
-
-    Lets the UI render a lifecycle move ("moved to Posted") distinctly
-    from a field edit without inventing a new stored event type — it
-    stays an ``update``, just annotated.
-    """
     field = obj.__audit_lifecycle_field__
     if not field or not changed or field not in changed:
         return None
@@ -280,14 +171,6 @@ def _build_payload(
     new_data: dict | None,
     changed: list[str] | None,
 ) -> dict[str, Any]:
-    """Compose the JSON-safe envelope the audit service consumes.
-
-    The shape is the canonical audit document Mongo will store —
-    consumer is a thin pass-through, so getting the field set right
-    here keeps the read API stable. ``audit_id`` is minted as a UUID
-    so the consumer's unique index can dedup retried deliveries
-    without losing the source row's identity.
-    """
     ctx = get_audit_context()
     try:
         label = obj.__audit_label__()
@@ -337,20 +220,6 @@ async def emit_audit_event(
     significant_fields: list[str] | None = None,
     lifecycle_transition: dict | None = None,
 ) -> None:
-    """Publish an audit event from a non-ORM call site.
-
-    The :class:`Auditable` mixin covers ORM writes, but a handful of
-    admin/back-office endpoints mutate state through raw SQL or
-    cross-service RPC and still need an audit row. Call this from
-    those sites to emit the same envelope the ORM listener produces;
-    the audit service has no idea (or care) that the publisher path
-    differs.
-
-    All identifying fields default to ``None`` so the caller passes
-    only what's meaningful for that particular write — a permission
-    flip, for instance, has no ``old_data``/``new_data`` snapshot the
-    way an ORM update does, just a ``changed_fields`` list.
-    """
     ctx = get_audit_context()
     payload = {
         "audit_id": str(uuid4()),
@@ -377,12 +246,6 @@ async def emit_audit_event(
 
 
 async def _publish_one(payload: dict[str, Any]) -> None:
-    """Publish one audit event to RabbitMQ — invoked as a background task.
-
-    Failures are logged and swallowed so a broker hiccup never
-    propagates as an unhandled task exception (which would clutter
-    logs with ``Task exception was never retrieved`` warnings).
-    """
     routing_key = f"audit.{payload['service']}.{payload['action']}"
     try:
         await publisher.publish(routing_key, payload)
@@ -391,24 +254,6 @@ async def _publish_one(payload: dict[str, Any]) -> None:
 
 
 def register_audit_listeners(session_class) -> None:
-    """Attach capture/publish hooks to a sync ``Session`` class.
-
-    Two-phase listener pattern:
-
-    * ``before_flush`` — capture each Auditable mutation while
-      ``committed_state`` still holds the pre-mutation values that
-      :func:`_diff` needs. The payload is staged in ``session.info``,
-      not in any persistent store, so a rolled-back flush leaves
-      nothing behind.
-    * ``after_commit`` — drain the staged payloads and schedule a
-      publish task per event. Running on commit (not flush) means
-      a rolled-back transaction never emits a phantom audit, which
-      is the whole point of pairing audit with the data write.
-
-    For async workflows pass ``async_sessionmaker.sync_session_class``
-    — the sync Session is what actually dispatches flush/commit events
-    under the hood.
-    """
 
     @event.listens_for(session_class, "before_flush")
     def _capture(session, flush_context, instances):

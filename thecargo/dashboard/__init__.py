@@ -1,12 +1,3 @@
-"""
-Shared dashboard primitives.
-
-Each service exposes its own `/api/v1/dashboard/*` endpoints (frontend calls them
-individually and composes the page). The shapers in this package are pure
-functions that turn raw service data into the response models the frontend
-expects, so every service emits the same shape without duplicating code.
-"""
-
 from thecargo.dashboard.period import DateWindow, Period, ResolvedPeriod, resolve_period
 from thecargo.dashboard.schemas import (
     ActivityActor,

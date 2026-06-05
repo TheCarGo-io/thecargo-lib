@@ -5,15 +5,6 @@ from uuid import UUID
 
 @dataclass
 class AuditUser:
-    """The acting principal behind a write, resolved from the JWT.
-
-    ``type`` distinguishes an authenticated ``user`` from a background
-    ``system`` job or ``service``-to-service call that carries no token.
-    ``first_name``/``last_name`` are captured as-they-were at action
-    time so a later rename never rewrites audit history; the UI builds
-    both the full name and the avatar initials from them.
-    """
-
     id: UUID | None = None
     email: str | None = None
     first_name: str | None = None

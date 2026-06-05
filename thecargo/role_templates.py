@@ -1,16 +1,3 @@
-"""Default role permission templates used when bootstrapping a new organization.
-
-Single source of truth consumed by both the auth service (sync Python, new-org flow)
-and the admin service (org defaults + "reset role to template" actions).
-
-The structure is:
-    { role_name: { "resource.action": "all" | "own" | "team" } }
-
-Any (resource, action) pair NOT listed for a role implies no access. Use
-`expand_template()` to obtain the nested dict shape consumed by the legacy
-auth ROLE_DEFINITIONS call sites.
-"""
-
 from typing import Final
 
 from thecargo.permissions import ACTIONS, RESOURCES
@@ -184,11 +171,6 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 
 
 def expand_template(template: dict[str, str]) -> dict[str, dict[str, str | None]]:
-    """Convert a flat "resource.action" → scope map into the nested shape:
-        { resource: { "view": scope|None, "create": scope|None, ... } }
-
-    Actions missing from the template become None (= no access).
-    """
     nested: dict[str, dict[str, str | None]] = {r: {a: None for a in ACTIONS} for r in RESOURCES}
     for key, scope in template.items():
         resource, action = key.split(".", 1)

@@ -1,32 +1,3 @@
-"""Canonical authorization model for TheCargo.
-
-Two distinct "superuser" concepts — never conflate them:
-
-    users.is_superuser = True
-        Platform-wide administrator. Can create organizations via
-        POST /api/v1/organizations, can log into the admin dashboard
-        (admin/app/admin/auth.py gates on this column), and in Requires
-        bypasses per-resource permission checks (Scope=all).
-        There are usually 1-3 of these for the whole platform.
-
-    role.name == "Superuser"
-        Organization-scoped administrator. Has role_permissions granting
-        scope="all" on every resource WITHIN their own organization.
-        One per org (created automatically by setup_org_defaults).
-        Cannot create other organizations and cannot log into the admin
-        dashboard unless the underlying User row also has is_superuser=True.
-
-Helpers:
-    ORG_SUPERUSER_ROLE_NAME  — the magic role name the alembic migrations
-                               and org-defaults setup grant everything to.
-    is_known(resource, action) — validate a (resource, action) pair.
-    GROUPS                   — presentational SALES/OPERATIONS/... grouping
-                               shared by the admin meta endpoint and the
-                               auth role-detail API.
-    build_permission_groups(scopes) — render GROUPS as a tree with each
-                               resource's per-action scope filled in.
-"""
-
 from typing import Final
 
 ORG_SUPERUSER_ROLE_NAME: Final[str] = "Superuser"
@@ -186,7 +157,6 @@ GROUPS: Final[list[dict]] = [
 
 
 def ui_resource_keys() -> set[str]:
-    """Every resource key referenced anywhere in GROUPS (parents + children)."""
     keys: set[str] = set()
     for group in GROUPS:
         for resource in group["resources"]:
@@ -197,11 +167,6 @@ def ui_resource_keys() -> set[str]:
 
 
 def _resource_node(node: dict, scopes: dict[tuple[str, str], str]) -> dict:
-    """Render one GROUPS resource node with its per-action scope filled in.
-
-    `scopes` maps (resource, action) -> granted scope. Anything absent is
-    NO_ACCESS, so a role with no row for a (resource, action) reads as `none`.
-    """
     out: dict = {
         "key": node["key"],
         "label": node["label"],
@@ -214,12 +179,6 @@ def _resource_node(node: dict, scopes: dict[tuple[str, str], str]) -> dict:
 
 
 def build_permission_groups(scopes: dict[tuple[str, str], str]) -> list[dict]:
-    """Render GROUPS as a section tree with each resource's scopes filled in.
-
-    Pass a `{(resource, action): scope}` map (e.g. built from a role's granted
-    permissions); the result is the Access Role matrix ready for the UI, with
-    every (resource, action) the role does not grant defaulting to NO_ACCESS.
-    """
     return [
         {
             "title": group["title"],

@@ -1,18 +1,3 @@
-"""Public-bucket MinIO helper for anonymously readable assets.
-
-The primary :mod:`thecargo.storage` module uses a single private bucket —
-URLs it returns require a presigned signature to fetch, which doesn't
-work for ``<img src=...>`` in customer-facing pages. Some assets (company
-logos, payment-method QR codes, public marketing images) need anonymous
-read so a sign page, contract PDF, payment form, or external partner can
-render them directly. This helper maintains a separate MinIO client bound
-to a bucket whose policy allows anonymous ``GetObject`` for everything
-under it.
-
-Each service that needs public assets calls :func:`init_public_storage`
-once at startup pointed at the same shared public bucket.
-"""
-
 import io
 import json
 import logging
@@ -36,13 +21,6 @@ def init_public_storage(
     secure: bool = False,
     public_url: str = "",
 ) -> None:
-    """Connect to MinIO, create the public bucket if missing, and ensure
-    its policy grants anonymous ``s3:GetObject`` on every object.
-
-    Idempotent — safe to call on every service start. Failures are logged
-    and swallowed so a MinIO outage at boot can't crash the process before
-    the rest of the app comes up.
-    """
     global _client, _bucket, _public_url
     try:
         _client = Minio(endpoint=endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
@@ -72,7 +50,6 @@ def init_public_storage(
 
 
 def upload_public_bytes(path: str, data: bytes, content_type: str = "application/octet-stream") -> str:
-    """Push bytes to the public bucket and return the anonymously fetchable URL."""
     if _client is None:
         raise RuntimeError("Public MinIO not initialized")
     _client.put_object(
@@ -86,13 +63,6 @@ def upload_public_bytes(path: str, data: bytes, content_type: str = "application
 
 
 def delete_public_object_from_url(url: str | None) -> None:
-    """Best-effort removal of a previously stored object given its public URL.
-
-    Used when a new asset replaces an old one so MinIO doesn't accumulate
-    orphans. Mismatches (URL from another bucket, malformed URL, already
-    deleted) are swallowed — cleanup is advisory, not a correctness
-    requirement.
-    """
     if not url or _client is None:
         return
     parsed = urlparse(url)

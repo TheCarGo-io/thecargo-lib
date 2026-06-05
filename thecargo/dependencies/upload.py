@@ -1,13 +1,3 @@
-"""Shared file-upload primitive.
-
-Each service has 1-N HTTP endpoints that stream user-uploaded bytes into
-MinIO (toolbar attachments, payment proofs, internal admin proxies).
-They all need the same handful of safeguards - empty-file guard, size
-cap, MIME allowlist, filename sanitization - and the same return shape
-so the frontend can rely on it. This module owns that machinery; the
-endpoints just pick a storage prefix and an allowlist preset.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -70,8 +60,6 @@ MAX_BYTES_LARGE: int = 25 * 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class UploadResult:
-    """Outcome of a successful upload - the shape every endpoint hands back."""
-
     name: str
     url: str
     mime_type: str
@@ -82,13 +70,6 @@ _FILENAME_KEEP = re.compile(r"[^A-Za-z0-9._\- ]+")
 
 
 def safe_filename(name: str | None) -> str:
-    """Strip path separators, control chars, and ``..`` segments.
-
-    Storage paths embed the sanitized name so a malicious filename
-    cannot escape its bucket prefix. The cleaned form is also what
-    ends up in display-facing fields (``shipment_files.name``, payment
-    attachment image URLs), so we keep it printable and length-bounded.
-    """
     raw = (name or "file").strip()
     cleaned = _FILENAME_KEEP.sub("_", raw).replace("..", "_").lstrip(".") or "file"
     return cleaned[:255]
@@ -116,33 +97,6 @@ async def upload_to_storage(
     max_bytes: int = MAX_BYTES_SMALL,
     public: bool = False,
 ) -> UploadResult:
-    """Validate, sanitize, and stream an :class:`UploadFile` into MinIO.
-
-    The caller picks the storage prefix via ``path_builder(safe_name,
-    content_type)`` so each service owns its own bucket layout (e.g.
-    ``billing/payments/<id>/proofs/<ts>-<safe_name>``,
-    ``contracts/<org>/signatures/<id>-<hash>.<ext>``) without this
-    primitive embedding service-specific knowledge. Pass an allowlist
-    preset (``IMAGE_TYPES`` / ``DOCUMENT_TYPES`` / ``PROOF_TYPES``) or a
-    custom one; leaving both empty accepts any MIME type.
-
-    Set ``public=True`` to land the bytes in the shared public bucket
-    (anonymous ``GetObject``) instead of the private per-service bucket.
-    The returned URL is then directly fetchable by a browser ``<img>``
-    without a presigned signature — for customer-facing assets like
-    payment-method QR codes. Requires ``init_public_storage`` to have run
-    at service startup.
-
-    Storage failures (MinIO unreachable, S3 error) are translated to
-    ``502 Bad Gateway`` and logged - the bytes never landed, so this is
-    an upstream-dependency failure rather than a client problem.
-
-    Raises:
-        HTTPException 400 - empty payload
-        HTTPException 413 - exceeds ``max_bytes``
-        HTTPException 415 - MIME not in allowlist
-        HTTPException 502 - object storage unavailable
-    """
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "Empty file")

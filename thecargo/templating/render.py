@@ -1,23 +1,3 @@
-"""Render and validate user-authored templates against a context.
-
-The engine is :mod:`liquid` (python-liquid) — chosen because:
-
-* its sandbox forbids attribute access on host objects, so user
-  templates can't reach into Python state even if a future template
-  comes from an untrusted source;
-* a near-identical implementation exists for the browser
-  (``liquidjs``), so the admin UI can render a live preview that
-  matches what the server will produce on send;
-* loops, conditionals, and filters are first-class — covering every
-  shipment use case (multi-vehicle, multi-stop, conditional CC, etc.)
-  without us reinventing them.
-
-This module is the **only** place call-sites should touch Liquid; the
-public API is :func:`render`, :func:`validate`, and
-:func:`legacy_to_liquid`. Rest of the codebase imports those from
-``thecargo.templating``.
-"""
-
 from __future__ import annotations
 
 import re
@@ -44,23 +24,6 @@ _KNOWN_ROOTS: frozenset[str] = frozenset(
 
 
 def _build_env() -> Environment:
-    """python-liquid 1.x's Environment.
-
-    Notes on configuration choices:
-
-    * ``autoescape=False`` — SMS is plain text and email body is HTML
-      that the caller is responsible for. We don't autoescape because
-      autoescape would turn ``<br>`` in templates into ``&lt;br&gt;``,
-      breaking long-standing user templates.
-    * ``strict_filters=False`` — an unknown filter renders as a no-op
-      rather than a 500. The validator surfaces it as a warning.
-    * ``tolerance=Mode.LAX`` — same idea applied to other parser
-      tolerance toggles.
-
-    Variable-level laxity (unknown variable → empty string) is the
-    library default: the standard ``Undefined`` class renders empty
-    when accessed.
-    """
     env = Environment(
         autoescape=False,
         strict_filters=False,
@@ -79,15 +42,6 @@ _ENV: Environment = _build_env()
 
 @dataclass(frozen=True)
 class RenderResult:
-    """Three-state result so callers can pick fail-loud vs fail-soft.
-
-    ``ok`` is true for every render that produced a string (even if
-    some variables were undefined and rendered empty); ``errors``
-    captures syntax/parse failures, which a caller in a send pipeline
-    will typically convert to a 4xx instead of shipping a broken
-    message to the customer.
-    """
-
     ok: bool
     text: str
     errors: tuple[str, ...] = ()
@@ -103,18 +57,6 @@ class ValidationIssue:
 
 
 def render(template: str, context: dict | None) -> RenderResult:
-    """Render ``template`` with ``context``.
-
-    Legacy compatibility — templates saved with single-brace ``{key}``
-    or flat-key ``{{key}}`` syntax (pre-Liquid migration) are rewritten
-    on the fly so the org admin's existing library keeps working
-    without forcing them to re-edit every row. New templates use full
-    Liquid (``{{ namespace.key }}``) and are unaffected.
-
-    Empty/None template short-circuits to an empty success — this
-    matches existing call-sites that pass partially-filled message
-    bodies.
-    """
     if not template:
         return RenderResult(ok=True, text="")
     ctx = context or {}
@@ -133,13 +75,6 @@ def render(template: str, context: dict | None) -> RenderResult:
 
 
 def validate(template: str) -> tuple[ValidationIssue, ...]:
-    """Static-check a template without a context.
-
-    Catches syntax errors plus references to variables we don't
-    recognise (with a Levenshtein "did you mean…" hint). Loop variables
-    inside ``{% for x in xs %}`` aren't flagged as unknown — only the
-    top-level path is checked.
-    """
     if not template:
         return ()
     issues: list[ValidationIssue] = []
@@ -203,16 +138,6 @@ _LEGACY_MAPPING: dict[str, str] = {
 
 
 def legacy_to_liquid(template: str) -> str:
-    """One-shot conversion of legacy ``{key}`` syntax to Liquid.
-
-    * ``{{key}}`` (already double-brace) → keeps the path but rewrites
-      the key if a mapping exists.
-    * ``{key}`` (single brace) → ``{{ liquid.path }}``.
-
-    Unknown legacy keys are passed through verbatim so the migration
-    script can surface them for human review instead of silently
-    dropping data.
-    """
     if not template:
         return template
 

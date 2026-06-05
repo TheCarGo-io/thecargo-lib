@@ -1,12 +1,3 @@
-"""
-Response models the dashboard frontend expects.
-
-Header / todo are kept as two separate responses because they live in two
-different services (auth owns user + team, shipment owns the action queue),
-so the frontend issues two requests and merges them. Every other panel maps
-1-to-1 to a single service endpoint.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,12 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DashboardHeaderResponse(BaseModel):
-    """Top-of-dashboard chrome — owned by the auth service.
-
-    The todo chip is filled by a separate request to the shipment service
-    (`GET /api/v1/dashboard/todo`); frontend merges the two responses.
-    """
-
     time_label: str = Field(..., description="Localised current time, e.g. '6:32 PM'", examples=["6:32 PM"])
     greeting: str = Field(..., description="Time-of-day greeting", examples=["Good evening"])
     user_first_name: str = Field(..., description="First name shown after the greeting", examples=["Sarah"])
@@ -48,12 +33,6 @@ class DashboardHeaderResponse(BaseModel):
 
 
 class DashboardTodoResponse(BaseModel):
-    """The number rendered inside the todo chip — owned by the shipment service.
-
-    Counts everything that would land in the action queue's three panels
-    (needs attention + ready to ship + waiting on customer).
-    """
-
     count: int = Field(..., description="Aggregate count for the action queue chip", examples=[17])
 
     model_config = ConfigDict(json_schema_extra={"example": {"count": 17}})
@@ -126,12 +105,6 @@ class DashboardQueueResponse(BaseModel):
 
 
 class CalendarItemKind(str, Enum):
-    """Discriminator the frontend keys off to route a click on a calendar row.
-
-    `stop` rows open the shipment detail view, `task` rows open the toolbar
-    task, and `follow_up_summary` opens the quotes-needing-follow-up list.
-    """
-
     STOP = "stop"
     TASK = "task"
     FOLLOW_UP_SUMMARY = "follow_up_summary"
@@ -348,15 +321,6 @@ class DashboardActivityResponse(BaseModel):
 
 
 class ActivityActor(BaseModel):
-    """Who performed the action.
-
-    Denormalised from the JWT at write time, so a later rename never
-    rewrites history. ``type`` is ``user`` for an authenticated
-    operator and ``system`` for background / service-to-service writes
-    (where ``id``/``email`` may be null). The client derives avatar
-    initials and colour from these fields itself.
-    """
-
     id: str | None = None
     email: str | None = None
     first_name: str | None = None
@@ -365,30 +329,18 @@ class ActivityActor(BaseModel):
 
 
 class ActivityResource(BaseModel):
-    """The audited entity the event is about."""
-
     type: str = Field(..., description="Resource kind, e.g. `shipment`, `payment`, `tag`")
     id: str | None = None
     label: str | None = Field(None, description="Human label captured at write time, e.g. `Shipment HG10115`")
 
 
 class ActivityChange(BaseModel):
-    """One field-level diff.
-
-    ``old``/``new`` are the raw stored values — strings, numbers,
-    booleans, ISO dates, or name lists (e.g. ``tags``). Foreign-key
-    columns carry a UUID; the client decides how to label and format
-    each field. ``null`` on either side means the field was unset.
-    """
-
     field: str
     old: Any = None
     new: Any = None
 
 
 class ActivityLifecycle(BaseModel):
-    """Stage/status transition extracted from an update, when present."""
-
     model_config = ConfigDict(populate_by_name=True)
 
     field: str = Field(..., description="`stage` or `status`")
@@ -397,14 +349,6 @@ class ActivityLifecycle(BaseModel):
 
 
 class ActivityItem(BaseModel):
-    """One raw activity row — the client renders text, avatar, and relative time.
-
-    Carries the structured audit record (actor, resource, field diffs,
-    lifecycle move, timestamp) instead of a pre-formatted line, so the
-    frontend owns all copy, localisation, money/date formatting, and
-    field labelling.
-    """
-
     id: str = Field(..., description="Stable audit event id")
     created_at: str = Field(..., description="ISO-8601 timestamp; the client renders relative time")
     service: str = Field(..., description="Emitting service, e.g. `shipment`, `billing`")

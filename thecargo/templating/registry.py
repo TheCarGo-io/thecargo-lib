@@ -1,51 +1,3 @@
-"""Variable catalogue exposed to template authors.
-
-Single contract between the renderer (which expects a particular
-nested context shape) and the UI (which lists available placeholders
-for the org admin). Add a variable here and it appears in the picker,
-in autocomplete, in validation, and in sample previews — no other
-file needs to change.
-
-Naming convention
------------------
-- Top-level keys are domain entities: ``customer``, ``shipment``,
-  ``pickup``, ``delivery``, ``carrier``, ``agent``, ``company``,
-  ``payment``.
-- ``org`` is kept as a legacy alias for ``company`` so existing
-  shipment-side templates keep rendering. Authors of new templates
-  should prefer ``company`` — it matches the connecta_v2 keys
-  (``{company.name}`` / ``{company.email}``) users are migrating
-  from and exposes the richer CompanyInfo branding fields
-  (mainline, fax, address, hours, …).
-- Lists use plural names: ``vehicles``.
-- Scalar leaves use ``snake_case``.
-- Snippets (multi-token Liquid blocks) live alongside scalars but
-  carry an explicit ``insert`` payload.
-
-Formatter convention
---------------------
-``FieldDef.formatter`` is *documentation metadata only*. The
-renderer does **not** auto-apply formatters. Builders must emit
-already-formatted strings — see ``billing/_build_payment_context``
-(``_money`` / ``_humanize`` helpers) for the canonical pattern.
-Mixing the two — declaring a formatter and also wrapping the value
-in a Liquid filter — double-formats; declaring one and emitting raw
-Decimal/datetime leaks the type into the email body. Pick one,
-document it on the builder.
-
-Adding a new field
-------------------
-1. Add a ``FieldDef`` to the appropriate ``ObjectSchema``.
-2. Add a top-level ``Variable`` referencing that path.
-3. Update every context builder that owns this entity so the
-   builder populates the new key for real data:
-   - shipment-side templates → ``shipment/app/services/v1/template_context.py``
-   - payment / receipt templates → ``billing/app/services/v1/payment_actions.py:_build_payment_context``
-4. The contract tests in each service assert REGISTRY paths resolve
-   to non-None in a sample builder output; they fail CI if you
-   skip step 3.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -62,8 +14,6 @@ class VarType(str, Enum):
 
 @dataclass(frozen=True)
 class FieldDef:
-    """A leaf placeholder inside an :class:`ObjectSchema`."""
-
     key: str
     label: str
     sample: object | None = None
@@ -73,12 +23,6 @@ class FieldDef:
 
 @dataclass(frozen=True)
 class ObjectSchema:
-    """Schema for an entity (Customer, Vehicle, Stop, …).
-
-    Used both for documentation and to drive nested submenus when the
-    user clicks an OBJECT/ARRAY variable in the picker.
-    """
-
     name: str
     label: str
     fields: tuple[FieldDef, ...]
@@ -86,15 +30,6 @@ class ObjectSchema:
 
 @dataclass(frozen=True)
 class Variable:
-    """A top-level placeholder the user can insert directly.
-
-    ``path`` is the dot-path used in templates (``customer.full_name``).
-    For OBJECT/ARRAY variables ``object_schema`` references a
-    :class:`ObjectSchema` from :data:`SCHEMAS` so the UI can drill in.
-    ``insert`` lets snippet entries override what gets dropped into the
-    editor — handy for prebuilt loops over arrays.
-    """
-
     path: str
     label: str
     group: str
@@ -297,7 +232,6 @@ SCHEMAS: dict[str, ObjectSchema] = {
 
 
 def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = None) -> tuple[Variable, ...]:
-    """Generate scalar Variables for every field in an ObjectSchema."""
     schema = SCHEMAS[schema_name]
     return tuple(
         Variable(
@@ -314,14 +248,6 @@ def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = No
 
 
 def _expand_delivery_stop(group: str, subgroup: str | None) -> tuple[Variable, ...]:
-    """Stop schema reused for delivery but with destination-flavored samples.
-
-    Without per-side samples the preview shows
-    ``Houston, TX → Houston, TX`` because pickup and delivery share
-    STOP_SCHEMA. Real shipments diverge here, so the preview should
-    too — otherwise the operator sees a one-city route and assumes
-    the template is broken.
-    """
     samples = {
         "type": "delivery",
         "city": "Dallas",
@@ -464,12 +390,6 @@ REGISTRY: tuple[Variable, ...] = (
 
 
 def registry_tree() -> dict:
-    """REGISTRY shaped for the UI: groups → subgroups → variables.
-
-    The order of groups, subgroups, and items within each subgroup
-    follows insertion order in :data:`REGISTRY` so authors control the
-    picker layout by editing one file.
-    """
     groups: dict[str, dict] = {}
     for v in REGISTRY:
         g = groups.setdefault(v.group, {"label": v.group, "subgroups": {}, "items": []})
@@ -508,15 +428,6 @@ def registry_tree() -> dict:
 
 
 def _var_to_dict(v: Variable) -> dict:
-    """Serialize for the JSON registry payload.
-
-    ``insert`` is intentionally left unset for plain scalar variables —
-    the frontend computes the placeholder on the fly. Only true
-    snippets (multi-token Liquid blocks the user shouldn't have to
-    type by hand) ship a pre-baked ``insert`` string. Without this
-    distinction the UI can't tell snippets from plain leaves and
-    its "is this insertable?" check trips on every row.
-    """
     out: dict = {
         "path": v.path,
         "label": v.label,
@@ -538,12 +449,6 @@ def _coerce_json(val: object | None) -> object | None:
 
 
 def sample_context() -> dict:
-    """Best-effort sample context built from REGISTRY samples.
-
-    Used by the editor's live preview when the user has no shipment
-    selected, so the template still renders to something readable
-    instead of empty placeholders.
-    """
     ctx: dict = {}
     for v in REGISTRY:
         if v.type == VarType.ARRAY:
@@ -574,12 +479,6 @@ def sample_context() -> dict:
 
 
 def suggest_correction(unknown_path: str, max_distance: int = 3) -> str | None:
-    """Levenshtein-style suggestion for a typo'd variable path.
-
-    Returns the closest known REGISTRY path within ``max_distance``
-    edits, or ``None`` if nothing is reasonably close. Used by
-    :func:`validate` to surface friendly "Did you mean…" hints.
-    """
     best: tuple[int, str] | None = None
     candidates = [v.path for v in REGISTRY]
     for path in candidates:

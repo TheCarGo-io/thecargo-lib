@@ -34,14 +34,6 @@ class ReferenceModel(Base):
 
 
 class FieldTooLongError(ValueError):
-    """Raised when a string column receives a value longer than its declared length.
-
-    Inherits from :class:`ValueError` so existing handlers that catch
-    ``ValueError`` still work; services can register a dedicated FastAPI
-    exception handler that converts this into a 422 response instead of
-    letting it bubble up as a 500.
-    """
-
     def __init__(self, table: str, column: str, max_length: int, actual_length: int) -> None:
         self.table = table
         self.column = column
@@ -51,13 +43,6 @@ class FieldTooLongError(ValueError):
 
 
 def _enforce_string_lengths(mapper, connection, target) -> None:
-    """Reject inserts/updates where a String(N) column overflows its limit.
-
-    Acts as a defense-in-depth complement to Pydantic ``max_length``: any
-    writer that bypasses the HTTP layer (Celery tasks, RabbitMQ consumers,
-    admin imports, alembic data migrations) still gets a clear domain error
-    instead of an opaque Postgres ``StringDataRightTruncationError``.
-    """
     for col in mapper.columns:
         col_type = col.type
         if not isinstance(col_type, String):

@@ -1,31 +1,3 @@
-"""Client for the communication service.
-
-Use :class:`CommunicationClient` from any service that needs to send
-email or SMS through the platform's centralised pipeline rather than
-talking to SMTP/SendGrid directly. Routing every transactional send
-through one place means we keep one rendering engine, one suppression
-list, one audit trail, and one set of provider credentials to rotate.
-
-Two transports:
-
-* **HTTP** (sync) — :meth:`send_email_by_template` / :meth:`send_email`.
-  Returns the dispatcher's result inline; raises on non-2xx. Use when
-  the caller can wait for delivery (admin actions, manual sends from
-  the toolbar) and wants the success/failure feedback right now.
-
-* **RabbitMQ** (async) — :meth:`send_email_by_template_async`.
-  Publishes ``email.send.requested`` to the ``thecargo.events`` topic
-  exchange and returns immediately. The communication consumer renders
-  and dispatches. Use for background-style sends where the caller must
-  not block on email delivery — the canonical case being 2FA verify
-  codes, where we want the login response to come back even if SMTP is
-  having a bad minute.
-
-The two paths converge inside communication: both end up calling the
-same ``email_dispatcher.dispatch`` so template resolution, SendGrid
-credential pickup, and audit happen identically.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -43,8 +15,6 @@ EMAIL_SEND_REQUESTED_TOPIC = "email.send.requested"
 
 
 class CommunicationClientError(RuntimeError):
-    """Raised when the communication service rejects or fails a send."""
-
     def __init__(self, status_code: int, detail: str, code: str | None = None):
         super().__init__(f"communication service returned {status_code}: {detail}")
         self.status_code = status_code
@@ -53,8 +23,6 @@ class CommunicationClientError(RuntimeError):
 
 
 class CommunicationClient(ServiceClient):
-    """Thin wrapper around the communication service's internal API."""
-
     async def send_email_by_template(
         self,
         *,
@@ -70,15 +38,6 @@ class CommunicationClient(ServiceClient):
         shipment_id: UUID | str | None = None,
         user_id: UUID | str | None = None,
     ) -> dict:
-        """Send an email rendered from a system or org template.
-
-        ``category`` is the purpose slug seeded in the templates table
-        (e.g. ``verify_code``, ``payment_invoice``); the org's
-        ``is_default`` row for that category wins, falling back to the
-        platform default. ``organization_id`` is required for org-scoped
-        templates and recommended for system templates so the per-org
-        default (if any) wins over the platform fallback.
-        """
         payload = {
             "category": category,
             "to": [to] if isinstance(to, str) else list(to),
@@ -112,12 +71,6 @@ class CommunicationClient(ServiceClient):
         shipment_id: UUID | str | None = None,
         user_id: UUID | str | None = None,
     ) -> dict:
-        """Send an ad-hoc email (no stored template).
-
-        Useful when the caller has already rendered the body or wants
-        to use one-off content. Use :meth:`send_email_by_template` for
-        every transactional flow with a stable identity.
-        """
         payload = {
             "to": [to] if isinstance(to, str) else list(to),
             "organization_id": str(organization_id),
@@ -159,18 +112,6 @@ class CommunicationClient(ServiceClient):
         shipment_id: UUID | str | None = None,
         user_id: UUID | str | None = None,
     ) -> None:
-        """Fire-and-forget email request via the RabbitMQ topic exchange.
-
-        Publishes an ``email.send.requested`` event with the same body
-        the HTTP path would have sent. The communication consumer
-        picks it up and dispatches. Use this when you cannot afford
-        to block on SMTP — login, async automations, fan-out sends.
-
-        No return value: the caller intentionally has no signal
-        (success/failure) at publish time. The consumer logs delivery
-        outcomes; subscribe a downstream service to ``email.sent`` /
-        ``email.send.failed`` if you need a reaction.
-        """
         payload = {
             "category": category,
             "to": [to] if isinstance(to, str) else list(to),
@@ -189,11 +130,6 @@ class CommunicationClient(ServiceClient):
 
 
 def _extract_error(response: httpx.Response) -> tuple[str, str | None]:
-    """Extract (detail, code) from a structured error response.
-
-    Communication's exception handler returns ``{detail, code}``;
-    legacy/non-structured errors fall back to text + ``None`` code.
-    """
     try:
         body = response.json()
     except ValueError:

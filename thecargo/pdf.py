@@ -1,22 +1,3 @@
-"""Shared HTML → PDF rendering primitive.
-
-Three interchangeable backends behind one async call so every service
-renders its documents (contracts, invoices, receipts) through the same
-code path instead of each re-implementing the transport:
-
-* ``gotenberg`` (default) — POSTs the HTML to a headless-Chromium sidecar
-  over REST. Keeps the browser out of the service image and isolates a
-  render OOM to the sidecar; byte-faithful to the on-screen page.
-* ``weasyprint`` — pure-Python paged media (Cairo / Pango), no browser or
-  subprocess. Lazily imported so the wheel stays optional.
-* ``chromium`` — a local headless-Chrome subprocess, mainly for dev and
-  pixel-regression against the historical renderer.
-
-The function is settings-agnostic: callers pass the chosen ``renderer`` and
-its inputs, so the primitive never reaches into any one service's config.
-Document assembly (templates + context) stays in the owning service.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -41,12 +22,6 @@ async def render_html_to_pdf(
     gotenberg_url: str | None = None,
     chrome_candidates: tuple[str, ...] = DEFAULT_CHROME_CANDIDATES,
 ) -> bytes:
-    """Render a full HTML document to PDF bytes via the selected backend.
-
-    Raises ``RuntimeError`` when the selected backend is unavailable (no
-    Chrome binary found, or a missing gotenberg url) so failures stay loud
-    rather than returning a degraded artifact.
-    """
     if renderer == "chromium":
         pdf = await _via_chromium(html, chrome_candidates)
         if not pdf:
@@ -62,11 +37,6 @@ async def render_html_to_pdf(
 
 
 async def _via_gotenberg(html: str, gotenberg_url: str) -> bytes:
-    """POST the HTML to the Gotenberg sidecar and stream back the PDF.
-
-    ``preferCssPageSize`` honours the template's ``@page`` size and
-    ``printBackground`` keeps background colours/fills in the output.
-    """
     import httpx
 
     files = {"index.html": ("index.html", html.encode("utf-8"), "text/html")}
@@ -82,11 +52,6 @@ async def _via_gotenberg(html: str, gotenberg_url: str) -> bytes:
 
 
 async def _via_weasyprint(html: str) -> bytes:
-    """Render via WeasyPrint — pure-Python paged media, no browser/subprocess.
-
-    Requires the ``weasyprint`` wheel plus its Cairo/Pango system libraries;
-    the lazy import keeps the dependency optional for gotenberg-only images.
-    """
 
     def _run() -> bytes:
         from weasyprint import HTML
@@ -111,11 +76,6 @@ def _find_chrome_binary(candidates: tuple[str, ...]) -> str | None:
 
 
 async def _via_chromium(html: str, candidates: tuple[str, ...]) -> bytes | None:
-    """Render via a local headless-Chrome subprocess; ``None`` if no binary.
-
-    Chrome supports the full modern CSS stack (flexbox/grid, web fonts,
-    gradients, SVG) so the PDF is a pixel-faithful copy of the browser view.
-    """
     chrome = _find_chrome_binary(candidates)
     if not chrome:
         return None

@@ -1,17 +1,3 @@
-"""Canonical lead-parsing field catalog.
-
-Single source of truth for the fields shown on the Lead Source review
-screen (SHIPPER / LOCATION / VEHICLE / SHIPMENT). Both the communication
-email parser (which grades each field against an inbound email) and the
-shipment provider API (which renders a blank skeleton when a provider has
-no parsed snapshot yet) build off this list, so the screen shows the same
-rows in the same order everywhere.
-
-``key`` is the stable UI identifier; ``item_name`` is the canonical key a
-confirmed mapping is persisted under (a ``LeadParsingItem`` name), so the
-catalog also defines how a reviewed field feeds the live parser.
-"""
-
 from __future__ import annotations
 
 import re
@@ -35,7 +21,6 @@ DATE_FORMATS = [
 
 
 def parse_date(date_string: str | None) -> str | None:
-    """Parse a human date in any supported format to ISO ``YYYY-MM-DD``."""
     if not date_string:
         return None
     date_string = date_string.strip()
@@ -64,13 +49,6 @@ _VALIDATORS = {
 
 
 def field_status(key: str, value: str | None) -> str:
-    """Grade one field's value: ``matched`` / ``review`` / ``not_found``.
-
-    Empty is ``not_found``; otherwise the per-field type check decides
-    ``matched`` (valid) vs ``review`` (present but low-confidence, e.g. a
-    ship date of "ASAP" or a non-numeric zip). Re-running this on an edited
-    value is what flips a corrected field from ``review`` to ``matched``.
-    """
     v = (value or "").strip()
     if not v:
         return "not_found"
@@ -214,12 +192,6 @@ REQUIRED_LEAD_FIELD_KEYS: list[str] = [
 
 
 def blank_lead_preview() -> dict:
-    """Return an empty preview: every catalog field present but unfilled.
-
-    Used as the skeleton when a provider has no parsed email snapshot, so
-    the review screen always renders the full field list (matching how the
-    role screen lists every resource even when none are assigned).
-    """
     fields = [
         {
             "key": spec["key"],
@@ -238,12 +210,6 @@ def blank_lead_preview() -> dict:
 
 
 def extract_lines(text: str | None) -> list[str]:
-    """Keep only ``key: value`` lines, normalized and stripped.
-
-    The parser matches whole lines, so anything without a colon separator
-    (greetings, signatures, blank lines) is dropped up front to cut false
-    positives before matching.
-    """
     text = (text or "").strip().replace("\r\n", "\n")
     lines = []
     for line in text.split("\n"):
@@ -255,8 +221,6 @@ def extract_lines(text: str | None) -> list[str]:
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """One catalog row in the compact shape the matcher iterates over."""
-
     key: str
     section: str
     label: str
@@ -273,12 +237,6 @@ DEFAULT_LABELS: dict[str, list[str]] = {spec["key"]: spec.get("labels", []) for 
 
 
 def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
-    """Group a provider's confirmed keyword values by review-screen field.
-
-    ``parsing_values`` is the ``[{value, item_name}]`` shape; only item names
-    that map onto a catalog field are kept (multi-vehicle ``vehicle2_*`` etc.
-    are irrelevant to the single-vehicle review grid).
-    """
     grouped: dict[str, list[str]] = {}
     for pv in parsing_values:
         field_key = ITEM_TO_FIELD.get(pv.get("item_name", ""))
@@ -293,14 +251,6 @@ def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
 def _find_value(
     lines: list[str], labels: list[str], used: set[int]
 ) -> tuple[str | None, str | None, str | None, int | None]:
-    """Return the first unused line whose text starts with one of ``labels``.
-
-    Labels are tried longest-first so a specific label (``vehicle type``)
-    wins over a generic one (``type``) on the same line. Returns the
-    extracted value, the source line, the label that matched (persisted as
-    the parse key on activation), and the line index so the caller can mark
-    it consumed and stop two fields claiming the same line.
-    """
     ordered = sorted(labels, key=len, reverse=True)
     for idx, line in enumerate(lines):
         if idx in used:
@@ -315,23 +265,6 @@ def _find_value(
 
 
 def parse_email_fields(text: str | None, parsing_values: list[dict] | None = None) -> dict:
-    """Grade a raw email body against every catalog field for the review screen.
-
-    A provider's confirmed keyword values take precedence; where it has none
-    the built-in :data:`LEAD_FIELD_CATALOG` ``labels`` bootstrap the first
-    guess. Each field is graded via :func:`field_status`:
-
-    * ``matched`` — a value was extracted and passed its type check
-    * ``review`` — a value was extracted but failed validation (e.g. a ship
-      date of "ASAP", a non-numeric zip) and needs a human glance
-    * ``not_found`` — no line matched; the dispatcher adds it manually
-
-    Returns ``{"fields": [...], "summary": {...}}`` ready to persist as a
-    provider's ``intake_preview`` and render verbatim. This is the single
-    source of truth shared by the communication email pipeline, the shipment
-    ``/api/v1/providers/parse-preview`` endpoint and the admin provider
-    editor, so all three grade an identical email identically.
-    """
     lines = extract_lines(text or "")
     custom = _custom_labels_by_field(parsing_values or [])
     used: set[int] = set()
