@@ -46,6 +46,8 @@ RESOURCES: Final[tuple[str, ...]] = (
     "conversation",
     "sip_credential",
     "power_dialer",
+    "telephony",
+    "phone_number",
     "company_info",
     "audit",
     "dashboard",
@@ -66,6 +68,15 @@ RESOURCES: Final[tuple[str, ...]] = (
 RESOURCE_SET: Final[frozenset[str]] = frozenset(RESOURCES)
 ACTION_SET: Final[frozenset[str]] = frozenset(ACTIONS)
 SCOPE_SET: Final[frozenset[str]] = frozenset(SCOPES)
+
+
+RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
+    "telephony": ("view",),
+}
+
+
+def actions_for(resource: str) -> tuple[str, ...]:
+    return RESOURCE_ACTIONS.get(resource, ACTIONS)
 
 
 def is_known(resource: str, action: str) -> bool:
@@ -126,6 +137,8 @@ GROUPS: Final[list[dict]] = [
             {"key": "conversation", "label": "Conversations"},
             {"key": "sip_credential", "label": "SIP Credentials"},
             {"key": "power_dialer", "label": "Power Dialer"},
+            {"key": "telephony", "label": "Telephony"},
+            {"key": "phone_number", "label": "Phone Numbers"},
         ],
     },
     {
@@ -193,3 +206,7 @@ _ghost = _ui_keys - RESOURCE_SET
 assert not _ghost, f"permissions.GROUPS references non-canonical resources: {sorted(_ghost)}"
 _missing = RESOURCE_SET - _ui_keys
 assert not _missing, f"permissions.GROUPS missing canonical resources: {sorted(_missing)}"
+_bad_ra = {r for r in RESOURCE_ACTIONS if r not in RESOURCE_SET} | {
+    a for acts in RESOURCE_ACTIONS.values() for a in acts if a not in ACTION_SET
+}
+assert not _bad_ra, f"permissions.RESOURCE_ACTIONS has non-canonical entries: {sorted(_bad_ra)}"
