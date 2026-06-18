@@ -114,6 +114,6 @@ async def upload_to_storage(
     try:
         url = await asyncio.to_thread(writer, storage_path, raw, content_type)
     except Exception as exc:
-        _log.error("MinIO upload failed for %s: %s", storage_path, exc)
+        _log.error("R2 upload failed for %s: %s", storage_path, exc)
         raise HTTPException(502, "Object storage unavailable") from exc
     return UploadResult(name=safe, url=url, mime_type=content_type, size_bytes=len(raw))
