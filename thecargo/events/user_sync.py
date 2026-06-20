@@ -87,23 +87,33 @@ async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url:
         return
 
     async with session_factory() as session:
-        existing = await session.execute(select(UserReplica.id))
-        existing_ids = {row for row in existing.scalars().all()}
+        existing = {r.id: r for r in (await session.execute(select(UserReplica))).scalars().all()}
 
-        count = 0
+        created = 0
+        updated = 0
         for u in users:
-            uid = UUID(u["id"])
-            if uid in existing_ids or not u.get("organization_id"):
+            if not u.get("organization_id"):
                 continue
-            session.add(
-                UserReplica(
-                    id=uid,
-                    organization_id=UUID(u["organization_id"]),
-                    **{k: u.get(k) for k in USER_FIELDS},
+            uid = UUID(u["id"])
+            replica = existing.get(uid)
+            if replica is None:
+                session.add(
+                    UserReplica(
+                        id=uid,
+                        organization_id=UUID(u["organization_id"]),
+                        **{k: u.get(k) for k in USER_FIELDS},
+                    )
                 )
-            )
-            count += 1
+                created += 1
+                continue
+            changed = False
+            for field in USER_FIELDS:
+                if field in u and getattr(replica, field) != u[field]:
+                    setattr(replica, field, u[field])
+                    changed = True
+            if changed:
+                updated += 1
 
         await session.commit()
-        if count:
-            logger.info("Bootstrapped %d users from auth service", count)
+        if created or updated:
+            logger.info("Bootstrapped users from auth service: %d created, %d updated", created, updated)
