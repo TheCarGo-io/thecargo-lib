@@ -22,6 +22,7 @@ from thecargo.dashboard.schemas import (
     DashboardPipelineResponse,
     DashboardQueueResponse,
     DashboardTargetsResponse,
+    DashboardTeamResponse,
     DashboardTodoResponse,
     NeedsAttentionPanel,
     PipelineColumn,
@@ -29,6 +30,10 @@ from thecargo.dashboard.schemas import (
     QueueListItem,
     ReadyToShipPanel,
     TargetCard,
+    TeamAverages,
+    TeamLeaderboard,
+    TeamLeaderCard,
+    TeamMember,
     WaitingOnCustomerPanel,
 )
 from thecargo.dashboard.shapers import (
@@ -39,6 +44,7 @@ from thecargo.dashboard.shapers import (
     shape_pipeline,
     shape_queue,
     shape_targets,
+    shape_team,
 )
 
 __all__ = [
@@ -64,6 +70,7 @@ __all__ = [
     "DashboardPipelineResponse",
     "DashboardQueueResponse",
     "DashboardTargetsResponse",
+    "DashboardTeamResponse",
     "DashboardTodoResponse",
     "DateWindow",
     "NeedsAttentionPanel",
@@ -74,6 +81,10 @@ __all__ = [
     "ReadyToShipPanel",
     "ResolvedPeriod",
     "TargetCard",
+    "TeamAverages",
+    "TeamLeaderboard",
+    "TeamLeaderCard",
+    "TeamMember",
     "WaitingOnCustomerPanel",
     "greeting_for",
     "resolve_period",
@@ -83,4 +94,5 @@ __all__ = [
     "shape_pipeline",
     "shape_queue",
     "shape_targets",
+    "shape_team",
 ]

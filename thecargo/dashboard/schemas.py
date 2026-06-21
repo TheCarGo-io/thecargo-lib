@@ -482,3 +482,135 @@ class DashboardPerformanceResponse(BaseModel):
             }
         }
     )
+
+
+# ── Team / manager performance ───────────────────────────────────────
+
+
+class TeamMember(BaseModel):
+    user_id: str = Field(..., description="Agent's user id — the client resolves name/avatar from its roster")
+    name: str | None = Field(
+        None, description="Full display name (null → resolve client-side)", examples=["Mike Reilly"]
+    )
+    first_name: str | None = Field(None, description="First name only — used in the compact strip", examples=["Mike"])
+    initials: str | None = Field(None, description="Two-letter avatar initials", examples=["MR"])
+    color: str | None = Field(None, description="Deterministic avatar colour", examples=["#2fb344"])
+    quotes: int = Field(0, description="Quotes created in the window")
+    dispatch_rate: str = Field("0%", description="Dispatched ÷ orders, formatted", examples=["41%"])
+    dispatched: str = Field("$0", description="Dispatched revenue, formatted", examples=["$3.9k"])
+    dispatched_int: int = Field(0, description="Dispatched revenue in cents — for client-side sorting")
+
+
+class TeamAverages(BaseModel):
+    """Per-agent means over the active team — feeds the user view's 'Team avg' line."""
+
+    quoted: int = Field(0, description="Mean quotes per agent")
+    quoted_label: str = Field("0", examples=["28"])
+    dispatched_cents: int = Field(0, description="Mean dispatched revenue per agent, in cents")
+    dispatched_label: str = Field("$0", examples=["$3.9k"])
+    dispatch_rate: float = Field(0.0, description="Mean dispatch rate per agent, percent")
+    dispatch_rate_label: str = Field("0%", examples=["38%"])
+    avg_margin_cents: int = Field(0, description="Mean margin per order per agent, in cents")
+    avg_margin_label: str = Field("$0", examples=["$295"])
+    collected_cents: int = Field(0, description="Mean payments collected per agent, in cents")
+    collected_label: str = Field("$0", examples=["$4.9k"])
+
+
+class TeamLeaderCard(BaseModel):
+    user_id: str = Field(..., description="Agent's user id — the client resolves name/avatar from its roster")
+    name: str | None = Field(None, examples=["Mike Reilly"])
+    initials: str | None = Field(None, examples=["MR"])
+    color: str | None = Field(None, examples=["#2fb344"])
+    dispatched: str = Field("$0", description="Dispatched revenue, formatted", examples=["$6.2k"])
+    detail: str = Field(
+        "",
+        description="Secondary line: '45% rate' (top) or '+24% vs prior 7d' / '-22% vs prior 7d'.",
+        examples=["45% rate", "+24% vs prior 7d"],
+    )
+    delta: float | None = Field(
+        None, description="Signed % change vs prior window (most-improved / needs-coaching); null for top performer."
+    )
+    trend: str = Field("", description="'up' | 'down' | '' — arrow direction for the delta.", examples=["up", "down"])
+
+
+class TeamLeaderboard(BaseModel):
+    top_performer: TeamLeaderCard | None = Field(None, description="Highest dispatched revenue this window")
+    most_improved: TeamLeaderCard | None = Field(None, description="Largest positive dispatched Δ vs prior")
+    needs_coaching: TeamLeaderCard | None = Field(None, description="Largest negative dispatched Δ vs prior")
+
+
+class DashboardTeamResponse(BaseModel):
+    period_label: str = Field(..., description="Period descriptor, e.g. 'Team · Last 7 days · Apr 16–22'")
+    team_size: int = Field(0, description="Number of agents with activity in the window")
+    team: list[TeamMember] = Field(
+        default_factory=list,
+        description="Per-agent strip, sorted by dispatched revenue desc. Client shows the top few + '+N more'.",
+    )
+    averages: TeamAverages = Field(default_factory=TeamAverages)
+    leaderboard: TeamLeaderboard = Field(default_factory=TeamLeaderboard)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "period_label": "Team · Last 7 days · Apr 16–22",
+                "team_size": 6,
+                "team": [
+                    {
+                        "user_id": "11111111-1111-1111-1111-111111111111",
+                        "name": "Anna Morrison",
+                        "first_name": "Anna",
+                        "initials": "AM",
+                        "color": "#2fb344",
+                        "quotes": 42,
+                        "dispatch_rate": "41%",
+                        "dispatched": "$5.1k",
+                        "dispatched_int": 510000,
+                    }
+                ],
+                "averages": {
+                    "quoted": 28,
+                    "quoted_label": "28",
+                    "dispatched_cents": 390000,
+                    "dispatched_label": "$3.9k",
+                    "dispatch_rate": 38.0,
+                    "dispatch_rate_label": "38%",
+                    "avg_margin_cents": 29500,
+                    "avg_margin_label": "$295",
+                    "collected_cents": 490000,
+                    "collected_label": "$4.9k",
+                },
+                "leaderboard": {
+                    "top_performer": {
+                        "user_id": "22222222-2222-2222-2222-222222222222",
+                        "name": "Mike Reilly",
+                        "initials": "MR",
+                        "color": "#214690",
+                        "dispatched": "$6.2k",
+                        "detail": "45% rate",
+                        "delta": None,
+                        "trend": "",
+                    },
+                    "most_improved": {
+                        "user_id": "33333333-3333-3333-3333-333333333333",
+                        "name": "Lisa Kim",
+                        "initials": "LK",
+                        "color": "#1c7ed6",
+                        "dispatched": "$4.2k",
+                        "detail": "+24% vs prior 7d",
+                        "delta": 24.0,
+                        "trend": "up",
+                    },
+                    "needs_coaching": {
+                        "user_id": "44444444-4444-4444-4444-444444444444",
+                        "name": "Jordan Tate",
+                        "initials": "JT",
+                        "color": "#fd7e14",
+                        "dispatched": "$1.2k",
+                        "detail": "-22% vs prior 7d",
+                        "delta": -22.0,
+                        "trend": "down",
+                    },
+                },
+            }
+        }
+    )

@@ -26,12 +26,17 @@ from thecargo.dashboard.schemas import (
     DashboardPipelineResponse,
     DashboardQueueResponse,
     DashboardTargetsResponse,
+    DashboardTeamResponse,
     NeedsAttentionPanel,
     PipelineColumn,
     PipelineFootItem,
     QueueListItem,
     ReadyToShipPanel,
     TargetCard,
+    TeamAverages,
+    TeamLeaderboard,
+    TeamLeaderCard,
+    TeamMember,
     WaitingOnCustomerPanel,
 )
 
@@ -52,7 +57,8 @@ def _fmt_count(n: int) -> str:
 
 
 def _fmt_money(cents: int) -> str:
-    dollars = (cents or 0) / 100.0
+    # Postgres SUM(bigint) returns Decimal; coerce so Decimal/float never TypeErrors.
+    dollars = int(cents or 0) / 100.0
     if dollars >= 1_000_000:
         return f"${dollars / 1_000_000:.1f}M"
     if dollars >= 10_000:
@@ -93,8 +99,9 @@ def _fill_daily_gaps(
     out: list[tuple[date, int, int]] = []
     cursor = from_date
     while cursor <= to_date:
-        row = rows_by_date.get(cursor)
-        out.append((cursor, (row or {}).get("charged_cents", 0), (row or {}).get("dispatched_revenue_cents", 0)))
+        row = rows_by_date.get(cursor) or {}
+        # int(): Postgres SUM(bigint) returns Decimal; the chart does Decimal/float later.
+        out.append((cursor, int(row.get("charged_cents", 0) or 0), int(row.get("dispatched_revenue_cents", 0) or 0)))
         cursor += timedelta(days=1)
     return out
 
@@ -261,6 +268,175 @@ def shape_performance(
     )
 
 
+# Analytics has no user roster, so names default to None and the client fills
+# them in from the user_id. Callers that DO own a replica may pass real names.
+_DEFAULT_NAME = {"name": None, "first_name": None, "initials": None, "color": None}
+
+_METRIC_KEYS = (
+    "leads",
+    "quotes",
+    "orders",
+    "dispatched",
+    "delivered",
+    "charged_cents",
+    "dispatched_revenue_cents",
+    "collected_cents",
+    "margin_cents",
+)
+
+
+def _norm_metrics(d: dict) -> dict:
+    """Coerce a per-agent metric row to plain ints.
+
+    Postgres ``SUM(bigint)`` comes back as ``Decimal``; downstream money/rate
+    math and ``_fmt_money`` must never see a Decimal (Decimal / float raises).
+    """
+    return {k: int(d.get(k) or 0) for k in _METRIC_KEYS}
+
+
+def _team_kpis(cur: dict) -> tuple[int, int, float, int, int]:
+    """(quotes, dispatched_cents, dispatch_rate_pct, avg_margin_cents, collected_cents) for one agent."""
+    quotes = cur.get("quotes", 0)
+    orders = cur.get("orders", 0)
+    dispatched_count = cur.get("dispatched", 0)
+    dispatched_cents = cur.get("dispatched_revenue_cents", 0)
+    margin_cents = cur.get("margin_cents", 0)
+    collected_cents = cur.get("collected_cents", 0)
+    dispatch_rate = (dispatched_count / orders * 100.0) if orders else 0.0
+    avg_margin_cents = int(margin_cents / orders) if orders else 0
+    return quotes, dispatched_cents, dispatch_rate, avg_margin_cents, collected_cents
+
+
+def _team_leaderboard(users: list[dict], names: dict[str, dict], prior_lbl: str) -> TeamLeaderboard:
+    top: tuple[int, str, float] | None = None  # (dispatched_cents, user_id, rate)
+    best: tuple[float, str, int] | None = None  # (delta_pct, user_id, dispatched_cents)
+    worst: tuple[float, str, int] | None = None
+
+    for u in users:
+        uid = str(u["user_id"])
+        cur = u.get("current", {}) or {}
+        prv = u.get("prior", {}) or {}
+        d_now = cur.get("dispatched_revenue_cents", 0)
+        orders = cur.get("orders", 0)
+        rate = (cur.get("dispatched", 0) / orders * 100.0) if orders else 0.0
+        if top is None or d_now > top[0]:
+            top = (d_now, uid, rate)
+        d_prev = prv.get("dispatched_revenue_cents", 0)
+        if d_prev > 0:
+            delta = (d_now - d_prev) / d_prev * 100.0
+            if best is None or delta > best[0]:
+                best = (delta, uid, d_now)
+            if worst is None or delta < worst[0]:
+                worst = (delta, uid, d_now)
+
+    def _card(uid: str, dispatched_cents: int, detail: str, delta: float | None, trend: str) -> TeamLeaderCard:
+        nm = names.get(uid) or _DEFAULT_NAME
+        return TeamLeaderCard(
+            user_id=uid,
+            name=nm["name"],
+            initials=nm["initials"],
+            color=nm["color"],
+            dispatched=_fmt_money(dispatched_cents),
+            detail=detail,
+            delta=delta,
+            trend=trend,
+        )
+
+    top_card = _card(top[1], top[0], f"{round(top[2])}% rate", None, "") if top and top[0] > 0 else None
+    improved = (
+        _card(best[1], best[2], f"+{round(best[0])}% vs {prior_lbl}", round(best[0], 1), "up")
+        if best and best[0] > 0
+        else None
+    )
+    coaching = (
+        _card(worst[1], worst[2], f"{round(worst[0])}% vs {prior_lbl}", round(worst[0], 1), "down")
+        if worst and worst[0] < 0
+        else None
+    )
+    return TeamLeaderboard(top_performer=top_card, most_improved=improved, needs_coaching=coaching)
+
+
+def shape_team(raw: dict, resolved: ResolvedPeriod, names: dict[str, dict] | None = None) -> DashboardTeamResponse:
+    """Build the manager view: per-agent strip + team averages + leaderboard.
+
+    ``names`` optionally maps user_id → {name, first_name, initials, color}. When
+    omitted (analytics has no user roster), name/avatar fields are left null and
+    the client resolves them from the user_id. The shaper itself stays DB-free.
+    """
+    names = names or {}
+    prior_lbl = _prior_label(resolved.period.value).lower()
+    # Normalise every metric row to int up front (Postgres SUM → Decimal) so the
+    # strip, averages, and leaderboard all do clean int/float math.
+    norm_users = [
+        {
+            "user_id": str(u["user_id"]),
+            "current": _norm_metrics(u.get("current") or {}),
+            "prior": _norm_metrics(u.get("prior") or {}),
+        }
+        for u in (raw.get("users", []) or [])
+    ]
+
+    members: list[TeamMember] = []
+    sums = {"quotes": 0, "dispatched_cents": 0, "rate": 0.0, "margin": 0, "collected": 0}
+    rate_n = 0  # agents with orders>0 — averaging a 0% rate over order-less agents is misleading.
+    for u in norm_users:
+        uid = u["user_id"]
+        quotes, dispatched_cents, rate, avg_margin_cents, collected_cents = _team_kpis(u["current"])
+        nm = names.get(uid) or _DEFAULT_NAME
+        members.append(
+            TeamMember(
+                user_id=uid,
+                name=nm["name"],
+                first_name=nm["first_name"],
+                initials=nm["initials"],
+                color=nm["color"],
+                quotes=quotes,
+                dispatch_rate=f"{round(rate)}%",
+                dispatched=_fmt_money(dispatched_cents),
+                dispatched_int=dispatched_cents,
+            )
+        )
+        sums["quotes"] += quotes
+        sums["dispatched_cents"] += dispatched_cents
+        sums["margin"] += avg_margin_cents
+        sums["collected"] += collected_cents
+        if u["current"].get("orders"):
+            sums["rate"] += rate
+            rate_n += 1
+
+    members.sort(key=lambda m: m.dispatched_int, reverse=True)
+
+    n = len(members)
+    if n:
+        avg_quoted = round(sums["quotes"] / n)
+        avg_dispatched = int(sums["dispatched_cents"] / n)
+        avg_rate = sums["rate"] / rate_n if rate_n else 0.0
+        avg_margin = int(sums["margin"] / n)
+        avg_collected = int(sums["collected"] / n)
+        averages = TeamAverages(
+            quoted=avg_quoted,
+            quoted_label=_fmt_count(avg_quoted),
+            dispatched_cents=avg_dispatched,
+            dispatched_label=_fmt_money(avg_dispatched),
+            dispatch_rate=round(avg_rate, 1),
+            dispatch_rate_label=f"{round(avg_rate)}%",
+            avg_margin_cents=avg_margin,
+            avg_margin_label=_fmt_money(avg_margin),
+            collected_cents=avg_collected,
+            collected_label=_fmt_money(avg_collected),
+        )
+    else:
+        averages = TeamAverages()
+
+    return DashboardTeamResponse(
+        period_label=f"Team · {resolved.label}",
+        team_size=n,
+        team=members,
+        averages=averages,
+        leaderboard=_team_leaderboard(norm_users, names, prior_lbl),
+    )
+
+
 def shape_pipeline(raw: dict, resolved: ResolvedPeriod) -> DashboardPipelineResponse:
     cur = raw.get("current", {}) or {}
     prv = raw.get("prior", {}) or {}
@@ -373,16 +549,22 @@ def _needs_attention_left(item: dict) -> str:
     return f"{stage_label} · {status}"
 
 
-def _today_pill(estimated_pickup_at: str | None) -> str:
+def _today_pill(estimated_pickup_at: str | date | datetime | None) -> str:
     if not estimated_pickup_at:
         return ""
-    try:
-        d = datetime.fromisoformat(estimated_pickup_at.replace("Z", "+00:00"))
-    except ValueError:
-        return ""
-    if d.date() == datetime.now(timezone.utc).date():
+    # Accept native date/datetime (analytics in-process) as well as ISO strings (JSON).
+    if isinstance(estimated_pickup_at, datetime):
+        d = estimated_pickup_at.date()
+    elif isinstance(estimated_pickup_at, date):
+        d = estimated_pickup_at
+    else:
+        try:
+            d = datetime.fromisoformat(str(estimated_pickup_at).replace("Z", "+00:00")).date()
+        except ValueError:
+            return ""
+    if d == datetime.now(timezone.utc).date():
         return '<span class="dash-aq-pill">Today</span>'
-    return _e(d.date().isoformat())
+    return _e(d.isoformat())
 
 
 def shape_queue(raw: dict) -> DashboardQueueResponse:
