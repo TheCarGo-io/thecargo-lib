@@ -94,47 +94,53 @@ async def start_customer_sync_consumer(rabbitmq_url: str, session_factory: async
 
 async def bootstrap_customers(session_factory: async_sessionmaker, shipment_service_url: str, service_secret: str):
     import httpx
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    customers: list[dict] = []
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            offset = 0
-            while True:
-                resp = await client.get(
-                    f"{shipment_service_url}/api/internal/customers",
-                    params={"offset": offset, "limit": 200},
-                    headers={"X-Service-Secret": service_secret},
-                )
-                resp.raise_for_status()
-                page = resp.json().get("results") or []
-                if not page:
-                    break
-                customers.extend(page)
-                offset += len(page)
-                if len(page) < 200:
-                    break
-    except Exception:
-        logger.warning("Failed to bootstrap customers from shipment service")
-        return
+    url = f"{shipment_service_url}/api/internal/customers"
+    headers = {"X-Service-Secret": service_secret}
+    page_size = 1000
+
+    async def _store(rows: list[dict]) -> int:
+        records = [
+            {"id": UUID(c["id"]), "organization_id": UUID(c["organization_id"]), **_values(c)}
+            for c in rows
+            if c.get("organization_id")
+        ]
+        if not records:
+            return 0
+        async with session_factory() as session:
+            stmt = pg_insert(CustomerReplica).values(records).on_conflict_do_nothing(index_elements=["id"])
+            await session.execute(stmt)
+            await session.commit()
+        return len(records)
 
     async with session_factory() as session:
-        existing = await session.execute(select(CustomerReplica.id))
-        existing_ids = set(existing.scalars().all())
+        seeded = (await session.execute(select(CustomerReplica.id).limit(1))).first() is not None
 
-        count = 0
-        for c in customers:
-            cid = UUID(c["id"])
-            if cid in existing_ids or not c.get("organization_id"):
-                continue
-            session.add(
-                CustomerReplica(
-                    id=cid,
-                    organization_id=UUID(c["organization_id"]),
-                    **_values(c),
-                )
-            )
-            count += 1
+    total = 0
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            if seeded:
+                resp = await client.get(url, params={"limit": 5000, "with_count": "false"}, headers=headers)
+                resp.raise_for_status()
+                total += await _store(resp.json().get("results") or [])
+            else:
+                after_id = "00000000-0000-0000-0000-000000000000"
+                while True:
+                    params: dict = {"limit": page_size, "with_count": "false", "after_id": after_id}
+                    resp = await client.get(url, params=params, headers=headers)
+                    resp.raise_for_status()
+                    page = resp.json().get("results") or []
+                    if not page:
+                        break
+                    total += await _store(page)
+                    last_id = page[-1]["id"]
+                    if last_id == after_id or len(page) < page_size:
+                        break
+                    after_id = last_id
+    except Exception:
+        logger.warning("Failed to sync customers from shipment service", exc_info=True)
+        return
 
-        await session.commit()
-        if count:
-            logger.info("Bootstrapped %d customers from shipment service", count)
+    if total:
+        logger.info("Synced %d customers from shipment service", total)
