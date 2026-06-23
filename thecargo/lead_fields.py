@@ -61,7 +61,7 @@ LEAD_FIELD_CATALOG: list[dict] = [
         "section": "SHIPPER",
         "label": "FULL NAME",
         "item_name": "customer_name",
-        "labels": ["full name", "customer name", "shipper name", "contact name", "name"],
+        "labels": ["full name", "customer name", "shipper name", "contact name", "first name", "last name", "name"],
     },
     {
         "key": "phone",
@@ -206,7 +206,7 @@ def blank_lead_preview() -> dict:
         }
         for spec in LEAD_FIELD_CATALOG
     ]
-    return {"fields": fields, "summary": {"matched": 0, "review": 0, "not_found": len(fields)}}
+    return {"fields": fields, "summary": {"matched": 0, "review": 0, "not_found": len(fields), "vehicles_detected": 0}}
 
 
 def extract_lines(text: str | None) -> list[str]:
@@ -248,43 +248,60 @@ def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
     return grouped
 
 
-def _find_value(
-    lines: list[str], labels: list[str], used: set[int]
-) -> tuple[str | None, str | None, str | None, int | None]:
-    ordered = sorted(labels, key=len, reverse=True)
-    for idx, line in enumerate(lines):
-        if idx in used:
-            continue
-        line_lower = line.lower()
-        for label in ordered:
-            if line_lower.startswith(label):
-                value = line[len(label) :].lstrip(" :\t-").strip()
-                if value:
-                    return value, line, label, idx
-    return None, None, None, None
+_LABEL_TAIL = r"\s*(\d*)\s*:"
+
+
+def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[int, int, str, int, str]]:
+    lowered = text.lower()
+    hits: list[tuple[int, int, str, int, int, str]] = []
+    for key, labels in labels_by_key.items():
+        for label in labels:
+            norm = label.strip().rstrip(":").strip().lower()
+            if not norm:
+                continue
+            for match in re.finditer(re.escape(norm) + _LABEL_TAIL, lowered):
+                number = match.group(1)
+                index = int(number) - 1 if number else 0
+                hits.append((match.start(), match.end(), key, index, len(norm), norm))
+
+    hits.sort(key=lambda hit: (hit[0], -hit[4]))
+    kept: list[tuple[int, int, str, int, str]] = []
+    last_end = -1
+    for start, end, key, index, _, label in hits:
+        if start >= last_end:
+            kept.append((start, end, key, index, label))
+            last_end = end
+    return kept
 
 
 def parse_email_fields(text: str | None, parsing_values: list[dict] | None = None) -> dict:
-    lines = extract_lines(text or "")
+    text = text or ""
     custom = _custom_labels_by_field(parsing_values or [])
-    used: set[int] = set()
+    labels_by_key = {spec.key: (custom.get(spec.key) or DEFAULT_LABELS.get(spec.key, [])) for spec in FIELD_CATALOG}
+
+    kept = _scan_labels(text, labels_by_key)
+
+    found: dict[str, dict[int, tuple[str, str, str]]] = {}
+    for position, (start, value_start, key, index, label) in enumerate(kept):
+        value_end = kept[position + 1][0] if position + 1 < len(kept) else len(text)
+        value = text[value_start:value_end].strip().strip(",;").strip()
+        if not value:
+            continue
+        found.setdefault(key, {}).setdefault(index, (value, text[start:value_end].strip(), label))
+
+    vehicles_detected = len(set(found.get("make", {})) | set(found.get("year", {})))
 
     fields: list[dict] = []
     counts = {"matched": 0, "review": 0, "not_found": 0}
-
     for spec in FIELD_CATALOG:
-        labels = custom.get(spec.key) or DEFAULT_LABELS.get(spec.key, [])
-        value, source, matched_label, idx = _find_value(lines, labels, used)
-
-        if value is None:
-            status, hint = "not_found", "no match found in email"
-        else:
-            used.add(idx)
+        per_index = found.get(spec.key)
+        if per_index:
+            value, source, matched_label = per_index[min(per_index)]
             status = field_status(spec.key, value)
-            if status == "matched":
-                hint = f'matched from "{source}"'
-            else:
-                hint = f'low confidence — matched "{value}"'
+            hint = f'matched from "{source}"' if status == "matched" else f'low confidence — matched "{value}"'
+        else:
+            value = source = matched_label = None
+            status, hint = "not_found", "no match found in email"
 
         counts[status] += 1
         fields.append(
@@ -301,4 +318,4 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
             }
         )
 
-    return {"fields": fields, "summary": counts}
+    return {"fields": fields, "summary": {**counts, "vehicles_detected": vehicles_detected}}
