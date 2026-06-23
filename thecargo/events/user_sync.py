@@ -73,6 +73,12 @@ async def start_user_sync_consumer(rabbitmq_url: str, session_factory: async_ses
 
 async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url: str, service_secret: str):
     import httpx
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    async with session_factory() as session:
+        seeded = (await session.execute(select(UserReplica.id).limit(1))).first() is not None
+    if seeded:
+        return
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -83,37 +89,21 @@ async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url:
             resp.raise_for_status()
             users = resp.json()
     except Exception:
-        logger.warning("Failed to bootstrap users from auth service")
+        logger.warning("Failed to bootstrap users from auth service", exc_info=True)
         return
 
+    records = [
+        {
+            "id": UUID(u["id"]),
+            "organization_id": UUID(u["organization_id"]),
+            **{k: u.get(k) for k in USER_FIELDS},
+        }
+        for u in users
+        if u.get("organization_id")
+    ]
+    if not records:
+        return
     async with session_factory() as session:
-        existing = {r.id: r for r in (await session.execute(select(UserReplica))).scalars().all()}
-
-        created = 0
-        updated = 0
-        for u in users:
-            if not u.get("organization_id"):
-                continue
-            uid = UUID(u["id"])
-            replica = existing.get(uid)
-            if replica is None:
-                session.add(
-                    UserReplica(
-                        id=uid,
-                        organization_id=UUID(u["organization_id"]),
-                        **{k: u.get(k) for k in USER_FIELDS},
-                    )
-                )
-                created += 1
-                continue
-            changed = False
-            for field in USER_FIELDS:
-                if field in u and getattr(replica, field) != u[field]:
-                    setattr(replica, field, u[field])
-                    changed = True
-            if changed:
-                updated += 1
-
+        await session.execute(pg_insert(UserReplica).values(records).on_conflict_do_nothing(index_elements=["id"]))
         await session.commit()
-        if created or updated:
-            logger.info("Bootstrapped users from auth service: %d created, %d updated", created, updated)
+    logger.info("Bootstrapped %d users from auth service", len(records))
