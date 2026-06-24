@@ -103,21 +103,38 @@ LEAD_FIELD_CATALOG: list[dict] = [
         "section": "LOCATION",
         "label": "DELIVERY CITY",
         "item_name": "destination_city",
-        "labels": ["delivery city", "destination city", "dropoff city", "to city", "delivery", "destination"],
+        "labels": [
+            "delivery city",
+            "destination city",
+            "dropoff city",
+            "drop off city",
+            "to city",
+            "dest city",
+            "moving city",
+            "delivery",
+            "destination",
+        ],
     },
     {
         "key": "delivery_state",
         "section": "LOCATION",
         "label": "DELIVERY STATE",
         "item_name": "destination_state",
-        "labels": ["delivery state", "destination state"],
+        "labels": ["delivery state", "destination state", "dest state", "moving state"],
     },
     {
         "key": "delivery_zip",
         "section": "LOCATION",
         "label": "DELIVERY ZIP",
         "item_name": "destination_zip",
-        "labels": ["delivery zip code", "delivery zipcode", "delivery zip", "destination zip"],
+        "labels": [
+            "delivery zip code",
+            "delivery zipcode",
+            "delivery zip",
+            "destination zip",
+            "dest zip",
+            "moving zip",
+        ],
     },
     {
         "key": "year",
@@ -166,7 +183,16 @@ LEAD_FIELD_CATALOG: list[dict] = [
         "section": "SHIPMENT",
         "label": "SHIP DATE",
         "item_name": "first_available_date",
-        "labels": ["first available date", "available date", "pickup date", "ready date", "ship date"],
+        "labels": [
+            "first available date",
+            "available date",
+            "available_date",
+            "move date",
+            "moving date",
+            "pickup date",
+            "ready date",
+            "ship date",
+        ],
     },
     {
         "key": "notes",
@@ -283,7 +309,9 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
 
     found: dict[str, dict[int, tuple[str, str, str]]] = {}
     for position, (start, value_start, key, index, label) in enumerate(kept):
-        value_end = kept[position + 1][0] if position + 1 < len(kept) else len(text)
+        next_label = kept[position + 1][0] if position + 1 < len(kept) else len(text)
+        line_end = text.find("\n", value_start)
+        value_end = next_label if line_end == -1 else min(next_label, line_end)
         value = text[value_start:value_end].strip().strip(",;").strip()
         if not value:
             continue
