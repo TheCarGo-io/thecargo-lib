@@ -279,13 +279,16 @@ FIELD_CATALOG: list[FieldSpec] = [
 
 ITEM_TO_FIELD: dict[str, str] = {spec.item_name: spec.key for spec in FIELD_CATALOG}
 
+_LEGACY_ITEM_ALIASES: dict[str, str] = {"customer_name": "first_name"}
+
 DEFAULT_LABELS: dict[str, list[str]] = {spec["key"]: spec.get("labels", []) for spec in LEAD_FIELD_CATALOG}
 
 
 def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = {}
     for pv in parsing_values:
-        field_key = ITEM_TO_FIELD.get(pv.get("item_name", ""))
+        item_name = pv.get("item_name", "")
+        field_key = ITEM_TO_FIELD.get(item_name) or _LEGACY_ITEM_ALIASES.get(item_name)
         if not field_key:
             continue
         value = (pv.get("value") or "").strip().lower()
