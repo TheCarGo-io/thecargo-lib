@@ -57,11 +57,27 @@ def field_status(key: str, value: str | None) -> str:
 
 LEAD_FIELD_CATALOG: list[dict] = [
     {
-        "key": "full_name",
+        "key": "first_name",
         "section": "SHIPPER",
-        "label": "FULL NAME",
-        "item_name": "customer_name",
-        "labels": ["full name", "customer name", "shipper name", "contact name", "first name", "last name", "name"],
+        "label": "FIRST NAME",
+        "item_name": "customer_first_name",
+        "labels": [
+            "first name",
+            "fname",
+            "given name",
+            "full name",
+            "customer name",
+            "shipper name",
+            "contact name",
+            "name",
+        ],
+    },
+    {
+        "key": "last_name",
+        "section": "SHIPPER",
+        "label": "LAST NAME",
+        "item_name": "customer_last_name",
+        "labels": ["last name", "lname", "surname", "family name"],
     },
     {
         "key": "phone",
@@ -207,7 +223,7 @@ LEAD_FIELD_CATALOG: list[dict] = [
 SECTION_ORDER: list[str] = ["SHIPPER", "LOCATION", "VEHICLE", "SHIPMENT"]
 
 REQUIRED_LEAD_FIELD_KEYS: list[str] = [
-    "full_name",
+    "first_name",
     "phone",
     "pickup_city",
     "delivery_city",
@@ -232,7 +248,11 @@ def blank_lead_preview() -> dict:
         }
         for spec in LEAD_FIELD_CATALOG
     ]
-    return {"fields": fields, "summary": {"matched": 0, "review": 0, "not_found": len(fields), "vehicles_detected": 0}}
+    return {
+        "fields": fields,
+        "vehicles": [],
+        "summary": {"matched": 0, "review": 0, "not_found": len(fields), "vehicles_detected": 0},
+    }
 
 
 def extract_lines(text: str | None) -> list[str]:
@@ -307,8 +327,13 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
 
     kept = _scan_labels(text, labels_by_key)
 
+    vehicle_keys = {spec.key for spec in FIELD_CATALOG if spec.section == "VEHICLE"}
+
     found: dict[str, dict[int, tuple[str, str, str]]] = {}
+    vehicle_slots: set[int] = set()
     for position, (start, value_start, key, index, label) in enumerate(kept):
+        if key in vehicle_keys:
+            vehicle_slots.add(index)
         next_label = kept[position + 1][0] if position + 1 < len(kept) else len(text)
         line_end = text.find("\n", value_start)
         value_end = next_label if line_end == -1 else min(next_label, line_end)
@@ -317,33 +342,38 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
             continue
         found.setdefault(key, {}).setdefault(index, (value, text[start:value_end].strip(), label))
 
-    vehicles_detected = len(set(found.get("make", {})) | set(found.get("year", {})))
-
-    fields: list[dict] = []
     counts = {"matched": 0, "review": 0, "not_found": 0}
-    for spec in FIELD_CATALOG:
-        per_index = found.get(spec.key)
-        if per_index:
-            value, source, matched_label = per_index[min(per_index)]
+
+    def _emit(spec: FieldSpec, index: int, *, count: bool) -> dict:
+        per_index = found.get(spec.key, {})
+        if index in per_index:
+            value, source, matched_label = per_index[index]
             status = field_status(spec.key, value)
             hint = f'matched from "{source}"' if status == "matched" else f'low confidence — matched "{value}"'
         else:
             value = source = matched_label = None
             status, hint = "not_found", "no match found in email"
+        if count:
+            counts[status] += 1
+        return {
+            "key": spec.key,
+            "section": spec.section,
+            "label": spec.label,
+            "item_name": spec.item_name,
+            "value": value,
+            "source": source,
+            "matched_label": matched_label,
+            "status": status,
+            "hint": hint,
+        }
 
-        counts[status] += 1
-        fields.append(
-            {
-                "key": spec.key,
-                "section": spec.section,
-                "label": spec.label,
-                "item_name": spec.item_name,
-                "value": value,
-                "source": source,
-                "matched_label": matched_label,
-                "status": status,
-                "hint": hint,
-            }
-        )
+    fields = [_emit(spec, min(found[spec.key]) if found.get(spec.key) else 0, count=True) for spec in FIELD_CATALOG]
 
-    return {"fields": fields, "summary": {**counts, "vehicles_detected": vehicles_detected}}
+    vehicle_specs = [spec for spec in FIELD_CATALOG if spec.section == "VEHICLE"]
+    vehicles = [[_emit(spec, idx, count=False) for spec in vehicle_specs] for idx in sorted(vehicle_slots)]
+
+    return {
+        "fields": fields,
+        "vehicles": vehicles,
+        "summary": {**counts, "vehicles_detected": len(vehicles)},
+    }
