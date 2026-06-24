@@ -91,10 +91,16 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     lang = get_language(request)
-    fallback = exc.detail if isinstance(exc.detail, str) else "Error"
     code = f"HTTP_{exc.status_code}"
     key = f"common.http_{exc.status_code}"
-    envelope = _envelope(code, key, lang, {}, fallback)
+    if isinstance(exc.detail, dict):
+        detail = exc.detail
+        fallback = detail.get("detail") or detail.get("message") or detail.get("error") or "Error"
+        params = {k: v for k, v in detail.items() if k not in ("detail", "message", "error")}
+    else:
+        fallback = exc.detail if isinstance(exc.detail, str) else "Error"
+        params = {}
+    envelope = _envelope(code, key, lang, params, fallback)
     return JSONResponse(status_code=exc.status_code, content=envelope)
 
 
