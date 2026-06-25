@@ -11,14 +11,6 @@ T = TypeVar("T")
 
 
 class TenantRepository:
-    """Thin wrapper enforcing ``organization_id`` scoping on every query.
-
-    Audit-logging is handled centrally by :mod:`thecargo.audit` session
-    listeners — subclass this repository without any audit boilerplate and
-    tag the *model* with :class:`~thecargo.audit.Auditable` if you want
-    writes to produce ``audit_logs`` rows.
-    """
-
     model: type
     soft_delete: bool = False
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, String, event, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -31,3 +31,36 @@ class ReferenceModel(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class FieldTooLongError(ValueError):
+    def __init__(self, table: str, column: str, max_length: int, actual_length: int) -> None:
+        self.table = table
+        self.column = column
+        self.max_length = max_length
+        self.actual_length = actual_length
+        super().__init__(f"{table}.{column} exceeds {max_length} characters (got {actual_length})")
+
+
+def _enforce_string_lengths(mapper, connection, target) -> None:
+    for col in mapper.columns:
+        col_type = col.type
+        if not isinstance(col_type, String):
+            continue
+        max_length = col_type.length
+        if max_length is None:
+            continue
+        value = getattr(target, col.key, None)
+        if not isinstance(value, str):
+            continue
+        if len(value) > max_length:
+            raise FieldTooLongError(
+                table=target.__tablename__,
+                column=col.key,
+                max_length=max_length,
+                actual_length=len(value),
+            )
+
+
+event.listen(Base, "before_insert", _enforce_string_lengths, propagate=True)
+event.listen(Base, "before_update", _enforce_string_lengths, propagate=True)

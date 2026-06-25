@@ -1,12 +1,24 @@
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 
 @dataclass
+class AuditUser:
+    id: UUID | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    type: str = "system"
+
+    @property
+    def full_name(self) -> str | None:
+        return f"{self.first_name or ''} {self.last_name or ''}".strip() or None
+
+
+@dataclass
 class AuditContext:
-    actor_id: UUID | None = None
-    actor_email: str | None = None
+    user: AuditUser = field(default_factory=AuditUser)
     organization_id: UUID | None = None
     ip_address: str | None = None
     user_agent: str | None = None

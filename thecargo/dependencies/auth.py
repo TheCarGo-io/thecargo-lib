@@ -48,12 +48,6 @@ class Scope:
         return self.scope == "team"
 
     def check_stage(self, stage: str | None) -> None:
-        """Raise 403 if a specific stage is requested but not permitted by this scope.
-
-        Call this at the top of stage-aware endpoints (e.g. list by stage, create in stage).
-        When stage is None (cross-stage op) and allowed_stages is set, also raises — a
-        stage-restricted role cannot perform cross-stage operations.
-        """
         if self.allowed_stages is None:
             return
         if stage is None:
@@ -76,7 +70,6 @@ def _decode_permissions(raw: dict) -> dict:
 
 
 def _decode_stage_filters(raw: dict) -> dict:
-    """Convert JWT "ps" payload into {resource: {action: tuple(stages) or None}}."""
     result: dict = {}
     for resource, actions in (raw or {}).items():
         result[resource] = {}
@@ -123,13 +116,6 @@ def role_version_key(role_id) -> str:
 
 
 async def _enforce_role_version(user: "TokenPayload") -> None:
-    """JWT's role_version must match whatever Redis currently holds.
-
-    Read-only check — we never populate on miss here. The admin service
-    writes the version to Redis when a role's permissions change; cold
-    cache means "we don't know" so we trust the JWT (fail-open). Access
-    tokens already have a short TTL, so the blast radius is bounded.
-    """
     from thecargo.cache import cache_get
 
     cached = await cache_get(role_version_key(user.role_id))
@@ -176,14 +162,6 @@ class Requires:
 
 
 def check_stage_permission(user: TokenPayload, stage: str, action: str) -> Scope:
-    """Resolve scope for a shipment operation on a specific stage.
-
-    Maps stage → resource (lead | quote | order) and returns the Scope, raising
-    403 if the user lacks permission. Use this in shipment endpoints that need
-    stage-aware authorization (list, create, update, delete, convert).
-
-    Platform superusers bypass all checks.
-    """
     if user.is_superuser:
         return Scope(scope="all", user_id=user.user_id, team_id=user.team_id)
 

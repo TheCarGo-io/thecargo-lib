@@ -1,11 +1,3 @@
-"""Liquid filter implementations shared by every renderer.
-
-Filter outputs must match liquidjs's client-side formatters byte for
-byte — admin previews would lie otherwise. The companion JS file is
-``admin/app/admin/statics/js/template-filters.js``; whenever a filter
-changes here, update it there too and add a snapshot test.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -13,13 +5,6 @@ from decimal import Decimal, InvalidOperation
 
 
 def currency(value: object, code: str = "USD") -> str:
-    """Format a numeric value as currency.
-
-    Locale is en-US for now (org-level setting is the only locale we
-    support), so formatting is fixed to ``$1,234.56``-style. The code
-    suffix is suppressed for USD; other codes get an ISO-suffixed
-    output like ``$1,234.56 EUR`` so the recipient can disambiguate.
-    """
     if value in (None, ""):
         return ""
     try:
@@ -35,11 +20,6 @@ def currency(value: object, code: str = "USD") -> str:
 
 
 def phone(value: object) -> str:
-    """Best-effort US phone formatter: ``(NNN) NNN-NNNN`` or ``+1 …``.
-
-    Non-US-looking inputs fall through unchanged so international
-    numbers don't get mangled.
-    """
     if value in (None, ""):
         return ""
     digits = "".join(ch for ch in str(value) if ch.isdigit())
@@ -78,28 +58,21 @@ def _to_datetime(value: object) -> datetime | None:
 
 
 def date_short(value: object) -> str:
-    """``Apr 25, 2026`` — locale-fixed, terse."""
     d = _to_date(value)
     return d.strftime("%b %d, %Y") if d else ""
 
 
 def date_long(value: object) -> str:
-    """``April 25, 2026`` — full month name."""
     d = _to_date(value)
     return d.strftime("%B %d, %Y") if d else ""
 
 
 def datetime_short(value: object) -> str:
-    """``Apr 25, 2026 8:00 AM``."""
     dt = _to_datetime(value)
     return dt.strftime("%b %d, %Y %-I:%M %p") if dt else ""
 
 
 def days_until(value: object) -> str:
-    """Difference in days between today and the given date.
-
-    Useful for "Your shipment ships in 3 days" snippets.
-    """
     d = _to_date(value)
     if not d:
         return ""
@@ -119,19 +92,11 @@ def upper_first(value: object) -> str:
 
 
 def status_label(value: object) -> str:
-    """Convert an internal status slug to a human label.
-
-    ``follow_up`` → ``Follow up``, ``not_now`` → ``Not now``. Useful
-    for shipment.status placeholders so end users don't see DB slugs.
-    """
     s = str(value or "").replace("_", " ").strip()
     return s[:1].upper() + s[1:] if s else s
 
 
 def default(value: object, fallback: str = "") -> str:
-    """Liquid ships ``default`` already, but ours coerces empty strings
-    too — handy when DB columns hold ``""`` instead of ``NULL``.
-    """
     if value in (None, ""):
         return fallback
     return str(value)

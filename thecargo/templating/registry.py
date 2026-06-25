@@ -1,35 +1,9 @@
-"""Variable catalogue exposed to template authors.
-
-Single contract between the renderer (which expects a particular
-nested context shape) and the UI (which lists available placeholders
-for the org admin). Add a variable here and it appears in the picker,
-in autocomplete, in validation, and in sample previews — no other
-file needs to change.
-
-Naming convention
------------------
-- Top-level keys are domain entities: ``customer``, ``shipment``,
-  ``pickup``, ``delivery``, ``carrier``, ``agent``, ``org``.
-- Lists use plural names: ``vehicles``.
-- Scalar leaves use ``snake_case``.
-- Snippets (multi-token Liquid blocks) live alongside scalars but
-  carry an explicit ``insert`` payload.
-
-Adding a new field
-------------------
-1. Add a ``FieldDef`` to the appropriate ``ObjectSchema``.
-2. Add a top-level ``Variable`` referencing that path.
-3. Update the corresponding serializer in
-   ``shipment/app/services/v1/template_context.py`` so the builder
-   populates the new key for real shipments.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
 
-VERSION = 2
+VERSION = 3
 
 
 class VarType(str, Enum):
@@ -40,8 +14,6 @@ class VarType(str, Enum):
 
 @dataclass(frozen=True)
 class FieldDef:
-    """A leaf placeholder inside an :class:`ObjectSchema`."""
-
     key: str
     label: str
     sample: object | None = None
@@ -51,12 +23,6 @@ class FieldDef:
 
 @dataclass(frozen=True)
 class ObjectSchema:
-    """Schema for an entity (Customer, Vehicle, Stop, …).
-
-    Used both for documentation and to drive nested submenus when the
-    user clicks an OBJECT/ARRAY variable in the picker.
-    """
-
     name: str
     label: str
     fields: tuple[FieldDef, ...]
@@ -64,15 +30,6 @@ class ObjectSchema:
 
 @dataclass(frozen=True)
 class Variable:
-    """A top-level placeholder the user can insert directly.
-
-    ``path`` is the dot-path used in templates (``customer.full_name``).
-    For OBJECT/ARRAY variables ``object_schema`` references a
-    :class:`ObjectSchema` from :data:`SCHEMAS` so the UI can drill in.
-    ``insert`` lets snippet entries override what gets dropped into the
-    editor — handy for prebuilt loops over arrays.
-    """
-
     path: str
     label: str
     group: str
@@ -207,6 +164,52 @@ PRICING_SCHEMA = ObjectSchema(
     ),
 )
 
+COMPANY_SCHEMA = ObjectSchema(
+    name="Company",
+    label="Sender (your company)",
+    fields=(
+        FieldDef("name", "Company name", "TheCargo Inc"),
+        FieldDef("department", "Department", "Logistics"),
+        FieldDef("email", "Company email", "support@thecargo.io"),
+        FieldDef("support_email", "Support email", "support@thecargo.io"),
+        FieldDef("accounting_email", "Accounting email", "billing@thecargo.io"),
+        FieldDef("phone", "Company phone", "(800) 555-0199", formatter="phone"),
+        FieldDef("mainline", "Mainline", "(800) 555-0199", formatter="phone"),
+        FieldDef("fax", "Fax", "(800) 555-0188", formatter="phone"),
+        FieldDef("address", "Office address", "1200 Main St, Houston, TX 77006"),
+        FieldDef("website", "Website", "https://thecargo.io"),
+        FieldDef("logo", "Logo URL", "https://cdn.thecargo.io/logos/acme.png"),
+        FieldDef("slug", "Slug", "thecargo"),
+        FieldDef("short_code", "Short code (initials)", "TC"),
+        FieldDef("code_letter", "Code letter", "T"),
+        FieldDef("mon_fri", "Hours Mon–Fri", "9:00 AM – 6:00 PM"),
+        FieldDef("saturday", "Hours Sat", "10:00 AM – 2:00 PM"),
+        FieldDef("sunday", "Hours Sun", "Closed"),
+    ),
+)
+
+PAYMENT_SCHEMA = ObjectSchema(
+    name="Payment",
+    label="Payment",
+    fields=(
+        FieldDef("invoice_number", "Invoice #", "INV-A1B2C3D4"),
+        FieldDef("receipt_id", "Receipt ID", "1000A1B2C3D4"),
+        FieldDef("amount", "Amount (base)", "120.00", formatter="currency"),
+        FieldDef("amount_charged", "Amount charged", "125.00", formatter="currency"),
+        FieldDef("total", "Total (with surcharge/discount)", "125.00", formatter="currency"),
+        FieldDef("surcharge", "Surcharge", "5.00", formatter="currency"),
+        FieldDef("surcharge_fee_rate", "Surcharge rate (%)", 4),
+        FieldDef("discount", "Discount", "0.00", formatter="currency"),
+        FieldDef("method", "Method (raw)", "credit_card"),
+        FieldDef("method_display", "Method (display)", "Credit Card"),
+        FieldDef("name_display", "Charge type / method", "Reservation"),
+        FieldDef("reference", "Reference / Stripe invoice id", "in_1QabcDEFghiJK"),
+        FieldDef("card_last4", "Card last 4", "4242"),
+        FieldDef("paid_date", "Paid date (ISO)", "2026-05-14", formatter="date_short"),
+        FieldDef("due_date_display", "Due date (display)", "May 25, 2026"),
+    ),
+)
+
 
 SCHEMAS: dict[str, ObjectSchema] = {
     s.name: s
@@ -214,11 +217,13 @@ SCHEMAS: dict[str, ObjectSchema] = {
         CUSTOMER_SCHEMA,
         AGENT_SCHEMA,
         ORG_SCHEMA,
+        COMPANY_SCHEMA,
         CARRIER_SCHEMA,
         STOP_SCHEMA,
         VEHICLE_SCHEMA,
         SHIPMENT_SCHEMA,
         PRICING_SCHEMA,
+        PAYMENT_SCHEMA,
     )
 }
 
@@ -227,7 +232,6 @@ SCHEMAS: dict[str, ObjectSchema] = {
 
 
 def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = None) -> tuple[Variable, ...]:
-    """Generate scalar Variables for every field in an ObjectSchema."""
     schema = SCHEMAS[schema_name]
     return tuple(
         Variable(
@@ -243,15 +247,40 @@ def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = No
     )
 
 
+def _expand_delivery_stop(group: str, subgroup: str | None) -> tuple[Variable, ...]:
+    samples = {
+        "type": "delivery",
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75201",
+        "address": "550 Elm St",
+        "business_name": "Dallas Auto Yard",
+        "contact_name": "Sara Lee",
+        "contact_phone": "(214) 555-7788",
+        "scheduled_at": "2026-04-29T14:00:00",
+    }
+    schema = SCHEMAS["Stop"]
+    return tuple(
+        Variable(
+            path=f"delivery.{f.key}",
+            label=f.label,
+            group=group,
+            subgroup=subgroup,
+            sample=samples.get(f.key, f.sample),
+            formatter=f.formatter,
+            description=f.description,
+        )
+        for f in schema.fields
+    )
+
+
 REGISTRY: tuple[Variable, ...] = (
-    *_expand("customer", "Customer", group="Customer"),
-    *_expand("shipment", "Shipment", group="Shipment"),
-    *_expand("pickup", "Stop", group="Pickup"),
-    *_expand("delivery", "Stop", group="Delivery"),
+    *_expand("customer", "Customer", group="Customer information", subgroup="Customer info"),
     Variable(
         path="vehicles_inline",
         label="Vehicle list (inline)",
-        group="Vehicles",
+        group="Shipping details",
+        subgroup="Vehicle details",
         type=VarType.SCALAR,
         sample="2020 Toyota Camry, 2018 Honda Civic",
         insert=(
@@ -263,7 +292,8 @@ REGISTRY: tuple[Variable, ...] = (
     Variable(
         path="vehicles_bullets",
         label="Vehicle list (bullets)",
-        group="Vehicles",
+        group="Shipping details",
+        subgroup="Vehicle details",
         type=VarType.SCALAR,
         sample="• 2020 Toyota Camry\n• 2018 Honda Civic",
         insert=(
@@ -272,17 +302,87 @@ REGISTRY: tuple[Variable, ...] = (
         ),
         description="All vehicles, one per line with bullets.",
     ),
-    Variable(path="vehicles[0].year", label="First vehicle year", group="Vehicles", sample=2020),
-    Variable(path="vehicles[0].make", label="First vehicle make", group="Vehicles", sample="Toyota"),
-    Variable(path="vehicles[0].model", label="First vehicle model", group="Vehicles", sample="Camry"),
-    Variable(path="vehicles[0].vin", label="First vehicle VIN", group="Vehicles", sample="1HG..."),
-    *_expand("pricing", "Pricing", group="Pricing"),
-    *_expand("carrier", "Carrier", group="Carrier"),
-    *_expand("agent", "Agent", group="Sender", subgroup="Sales rep"),
-    *_expand("org", "Org", group="Sender", subgroup="Company"),
-    Variable(path="current_date", label="Today's date", group="Date & Time", sample="Apr 25, 2026", formatter="date_short"),
-    Variable(path="current_year", label="Current year", group="Date & Time", sample=2026),
-    Variable(path="tracking_link", label="Tracking link", group="Tracking", sample="https://app.thecargo.io/track/ORD-1234"),
+    Variable(
+        path="vehicles[0].year",
+        label="First vehicle year",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample=2020,
+    ),
+    Variable(
+        path="vehicles[0].make",
+        label="First vehicle make",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="Toyota",
+    ),
+    Variable(
+        path="vehicles[0].model",
+        label="First vehicle model",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="Camry",
+    ),
+    Variable(
+        path="vehicles[0].vin",
+        label="First vehicle VIN",
+        group="Shipping details",
+        subgroup="Vehicle details",
+        sample="1HG...",
+    ),
+    *_expand("shipment", "Shipment", group="Shipping details", subgroup="Shipping info"),
+    *_expand("pickup", "Stop", group="Shipping details", subgroup="Origin information"),
+    *_expand_delivery_stop(group="Shipping details", subgroup="Destination information"),
+    Variable(
+        path="tracking_link",
+        label="Tracking link",
+        group="Shipping details",
+        subgroup="Other information",
+        sample="https://app.thecargo.io/track/ORD-1234",
+    ),
+    *_expand("pricing", "Pricing", group="Price info", subgroup="Price information"),
+    *_expand("payment", "Payment", group="Price info", subgroup="Payment details"),
+    Variable(
+        path="payment_url",
+        label="Pay Now link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://pay.thecargo.io/pay-to-orders/abc?slug=acme",
+        description="Hosted pay page for the customer to settle this invoice.",
+    ),
+    Variable(
+        path="card_url",
+        label="Card auth link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://app.thecargo.io/contract/cc-auth/abc/def",
+        description="Credit-card authorization form URL.",
+    ),
+    Variable(
+        path="sign_url",
+        label="Contract sign link",
+        group="Price info",
+        subgroup="Pay links",
+        sample="https://app.thecargo.io/contract/abc",
+        description="Contract e-signature page URL.",
+    ),
+    *_expand("carrier", "Carrier", group="Carrier", subgroup="Carrier info"),
+    *_expand("company", "Company", group="Company / User information", subgroup="Company information"),
+    *_expand("agent", "Agent", group="Company / User information", subgroup="User information"),
+    *_expand("org", "Org", group="Company / User information", subgroup="Company (legacy)"),
+    Variable(
+        path="current_date",
+        label="Today's date",
+        group="Date & Time",
+        sample="Apr 25, 2026",
+        formatter="date_short",
+    ),
+    Variable(
+        path="current_year",
+        label="Current year",
+        group="Date & Time",
+        sample=2026,
+    ),
 )
 
 
@@ -290,12 +390,6 @@ REGISTRY: tuple[Variable, ...] = (
 
 
 def registry_tree() -> dict:
-    """REGISTRY shaped for the UI: groups → subgroups → variables.
-
-    The order of groups, subgroups, and items within each subgroup
-    follows insertion order in :data:`REGISTRY` so authors control the
-    picker layout by editing one file.
-    """
     groups: dict[str, dict] = {}
     for v in REGISTRY:
         g = groups.setdefault(v.group, {"label": v.group, "subgroups": {}, "items": []})
@@ -310,10 +404,7 @@ def registry_tree() -> dict:
             {
                 "label": g["label"],
                 "items": g["items"],
-                "subgroups": [
-                    {"label": sg["label"], "items": sg["items"]}
-                    for sg in g["subgroups"].values()
-                ],
+                "subgroups": [{"label": sg["label"], "items": sg["items"]} for sg in g["subgroups"].values()],
             }
             for g in groups.values()
         ],
@@ -337,15 +428,6 @@ def registry_tree() -> dict:
 
 
 def _var_to_dict(v: Variable) -> dict:
-    """Serialize for the JSON registry payload.
-
-    ``insert`` is intentionally left unset for plain scalar variables —
-    the frontend computes the placeholder on the fly. Only true
-    snippets (multi-token Liquid blocks the user shouldn't have to
-    type by hand) ship a pre-baked ``insert`` string. Without this
-    distinction the UI can't tell snippets from plain leaves and
-    its "is this insertable?" check trips on every row.
-    """
     out: dict = {
         "path": v.path,
         "label": v.label,
@@ -367,12 +449,6 @@ def _coerce_json(val: object | None) -> object | None:
 
 
 def sample_context() -> dict:
-    """Best-effort sample context built from REGISTRY samples.
-
-    Used by the editor's live preview when the user has no shipment
-    selected, so the template still renders to something readable
-    instead of empty placeholders.
-    """
     ctx: dict = {}
     for v in REGISTRY:
         if v.type == VarType.ARRAY:
@@ -384,21 +460,25 @@ def sample_context() -> dict:
             cursor = cursor.setdefault(p, {})
         if isinstance(cursor, dict):
             cursor[parts[-1]] = v.sample
-    ctx.setdefault("vehicles", [
-        {"year": 2020, "make": "Toyota", "model": "Camry", "vin": "1HG...", "color": "Blue", "is_inoperable": False},
-        {"year": 2018, "make": "Honda", "model": "Civic", "vin": "2HG...", "color": "Red", "is_inoperable": False},
-    ])
+    ctx.setdefault(
+        "vehicles",
+        [
+            {
+                "year": 2020,
+                "make": "Toyota",
+                "model": "Camry",
+                "vin": "1HG...",
+                "color": "Blue",
+                "is_inoperable": False,
+            },
+            {"year": 2018, "make": "Honda", "model": "Civic", "vin": "2HG...", "color": "Red", "is_inoperable": False},
+        ],
+    )
     ctx["_meta"] = {"locale": "en", "tz": "America/New_York", "currency": "USD"}
     return ctx
 
 
 def suggest_correction(unknown_path: str, max_distance: int = 3) -> str | None:
-    """Levenshtein-style suggestion for a typo'd variable path.
-
-    Returns the closest known REGISTRY path within ``max_distance``
-    edits, or ``None`` if nothing is reasonably close. Used by
-    :func:`validate` to surface friendly "Did you mean…" hints.
-    """
     best: tuple[int, str] | None = None
     candidates = [v.path for v in REGISTRY]
     for path in candidates:

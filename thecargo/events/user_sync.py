@@ -73,6 +73,12 @@ async def start_user_sync_consumer(rabbitmq_url: str, session_factory: async_ses
 
 async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url: str, service_secret: str):
     import httpx
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    async with session_factory() as session:
+        seeded = (await session.execute(select(UserReplica.id).limit(1))).first() is not None
+    if seeded:
+        return
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -83,27 +89,21 @@ async def bootstrap_users(session_factory: async_sessionmaker, auth_service_url:
             resp.raise_for_status()
             users = resp.json()
     except Exception:
-        logger.warning("Failed to bootstrap users from auth service")
+        logger.warning("Failed to bootstrap users from auth service", exc_info=True)
         return
 
+    records = [
+        {
+            "id": UUID(u["id"]),
+            "organization_id": UUID(u["organization_id"]),
+            **{k: u.get(k) for k in USER_FIELDS},
+        }
+        for u in users
+        if u.get("organization_id")
+    ]
+    if not records:
+        return
     async with session_factory() as session:
-        existing = await session.execute(select(UserReplica.id))
-        existing_ids = {row for row in existing.scalars().all()}
-
-        count = 0
-        for u in users:
-            uid = UUID(u["id"])
-            if uid in existing_ids or not u.get("organization_id"):
-                continue
-            session.add(
-                UserReplica(
-                    id=uid,
-                    organization_id=UUID(u["organization_id"]),
-                    **{k: u.get(k) for k in USER_FIELDS},
-                )
-            )
-            count += 1
-
+        await session.execute(pg_insert(UserReplica).values(records).on_conflict_do_nothing(index_elements=["id"]))
         await session.commit()
-        if count:
-            logger.info("Bootstrapped %d users from auth service", count)
+    logger.info("Bootstrapped %d users from auth service", len(records))
