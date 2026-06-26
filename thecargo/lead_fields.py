@@ -307,6 +307,7 @@ def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
 
 
 _LABEL_TAIL = r"\s*(\d*)\s*:"
+_VEHICLE_PREFIX = re.compile(r"\b(?:vehicle|unit)\s*#?\s*(\d+)\b")
 
 
 def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[int, int, str, int, str]]:
@@ -319,8 +320,13 @@ def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[i
                 continue
             for match in re.finditer(re.escape(norm) + _LABEL_TAIL, lowered):
                 number = match.group(1)
-                index = int(number) - 1 if number else 0
-                hits.append((match.start(), match.end(), key, index, len(norm), norm))
+                if number:
+                    index = int(number) - 1
+                else:
+                    line_start = lowered.rfind("\n", 0, match.start()) + 1
+                    prefix = _VEHICLE_PREFIX.search(lowered, line_start, match.start())
+                    index = int(prefix.group(1)) - 1 if prefix else 0
+                hits.append((match.start(), match.end(), key, max(index, 0), len(norm), norm))
 
     hits.sort(key=lambda hit: (hit[0], -hit[4]))
     kept: list[tuple[int, int, str, int, str]] = []
