@@ -19,6 +19,35 @@ _KNOWN_ROOTS: frozenset[str] = frozenset(
     {"customer", "shipment", "agent", "pickup", "delivery", "vehicles", "stops", "files", "tags", "_meta"}
 )
 
+_REGISTRY_ROOTS: frozenset[str] = frozenset(v.path.split(".")[0].split("[")[0] for v in REGISTRY)
+_CONTEXT_EXTRA_ROOTS: frozenset[str] = frozenset(
+    {
+        "customer",
+        "shipment",
+        "pricing",
+        "agent",
+        "company",
+        "org",
+        "carrier",
+        "pickup",
+        "delivery",
+        "stops",
+        "vehicle",
+        "vehicles",
+        "files",
+        "tags",
+        "payment",
+        "vehicles_summary",
+        "online_booking",
+        "tracking_link",
+        "current_time",
+        "origin",
+        "destination",
+        "_meta",
+    }
+)
+_KNOWN_VAR_ROOTS: frozenset[str] = _KNOWN_ROOTS | _REGISTRY_ROOTS | _CONTEXT_EXTRA_ROOTS
+
 
 # ── Environment ──────────────────────────────────────────────────────
 
@@ -148,9 +177,13 @@ def legacy_to_liquid(template: str) -> str:
 
     def _replace_single(m: re.Match[str]) -> str:
         key = m.group(1).strip()
-        if key not in _LEGACY_MAPPING:
-            return m.group(0)
-        return "{{ " + _LEGACY_MAPPING[key] + " }}"
+        filt = (m.group(2) or "").strip()
+        if key in _LEGACY_MAPPING:
+            return "{{ " + _LEGACY_MAPPING[key] + " }}"
+        root = key.split(".")[0].split("[")[0]
+        if root in _KNOWN_VAR_ROOTS:
+            return "{{ " + key + (" " + filt if filt else "") + " }}"
+        return m.group(0)
 
     out = _DOUBLE_BRACE_LEGACY_RE.sub(_replace_double, template)
     out = _SINGLE_BRACE_LEGACY_RE.sub(_replace_single, out)
@@ -166,4 +199,9 @@ _LOOP_VAR_RE = re.compile(r"\{%\s*for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s+", re.IG
 # Pre-Liquid `{{key}}` (no spaces, flat name).
 _DOUBLE_BRACE_LEGACY_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 # Pre-Liquid `{key}`.
-_SINGLE_BRACE_LEGACY_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_SINGLE_BRACE_LEGACY_RE = re.compile(
+    r"(?<!\{)\{\s*"
+    r"([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[[0-9]+\])*)"
+    r"(\s*\|\s*[^{}]*?)?"
+    r"\s*\}(?!\})"
+)
