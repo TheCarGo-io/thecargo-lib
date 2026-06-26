@@ -371,7 +371,8 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
         value = text[value_start:value_end].strip().strip(",;").strip()
         if not value:
             continue
-        found.setdefault(key, {}).setdefault(index, (value, text[start:value_end].strip(), label))
+        line_start = text.rfind("\n", 0, start) + 1
+        found.setdefault(key, {}).setdefault(index, (value, text[line_start:value_end].strip(), label))
 
     counts = {"matched": 0, "review": 0, "not_found": 0}
 
