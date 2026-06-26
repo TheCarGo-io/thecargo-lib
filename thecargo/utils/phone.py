@@ -43,6 +43,15 @@ def normalize_phone(value: str | None) -> str | None:
         return None
 
 
+def normalize_inbound_sender(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return normalize_phone(stripped) or stripped
+
+
 format_phone = format_us_phone
 
 
