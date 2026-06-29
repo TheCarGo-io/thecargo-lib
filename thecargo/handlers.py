@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 
 from thecargo.exceptions import AppException
 from thecargo.i18n import bind_locale_dir, get_language, translate
+from thecargo.observability import capture_exception as _sentry_capture
+from thecargo.observability import init_sentry
 
 _log = logging.getLogger(__name__)
 
@@ -105,6 +107,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 async def fallback_handler(request: Request, exc: Exception) -> JSONResponse:
+    _sentry_capture(exc)
     _log.exception("Unhandled exception on %s %s", request.method, request.url.path)
     lang = get_language(request)
     envelope = _envelope(
@@ -118,6 +121,7 @@ async def fallback_handler(request: Request, exc: Exception) -> JSONResponse:
 
 
 def register_handlers(app: FastAPI, locale_dir: Path | str | None = None) -> None:
+    init_sentry()
     if locale_dir is not None:
         bind_locale_dir(locale_dir)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
