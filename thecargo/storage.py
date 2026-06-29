@@ -20,6 +20,33 @@ RETRY_DELAY = 1.0
 
 _TRANSIENT = (ClientError, BotoCoreError, ConnectionError, OSError)
 
+_NON_RETRYABLE_CODES = frozenset(
+    {"NoSuchKey", "NoSuchBucket", "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"}
+)
+
+
+def _client_error_code(exc: Exception) -> tuple[str, int | None]:
+    if not isinstance(exc, ClientError):
+        return "", None
+    response = getattr(exc, "response", None) or {}
+    code = str((response.get("Error") or {}).get("Code") or "")
+    status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    return code, status if isinstance(status, int) else None
+
+
+def _is_retryable(exc: Exception) -> bool:
+    code, status = _client_error_code(exc)
+    if code in _NON_RETRYABLE_CODES:
+        return False
+    if status is not None and 400 <= status < 500:
+        return False
+    return True
+
+
+def is_missing_object_error(exc: Exception) -> bool:
+    code, status = _client_error_code(exc)
+    return code == "NoSuchKey" or status == 404
+
 
 def _retry(func: Any) -> Any:
     @wraps(func)
@@ -30,6 +57,9 @@ def _retry(func: Any) -> Any:
                 return func(*args, **kwargs)
             except _TRANSIENT as e:
                 last_exc = e
+                if not _is_retryable(e):
+                    logger.warning("R2 %s non-retryable error: %s", func.__name__, e)
+                    raise
                 if attempt < MAX_RETRIES:
                     delay = RETRY_DELAY * attempt
                     logger.warning(
@@ -125,6 +155,12 @@ def object_path_from_url(url: str) -> str:
     if _bucket and url.startswith(f"{_bucket}/"):
         url = url[len(_bucket) + 1 :]
     return url
+
+
+def is_external_url(reference: str) -> bool:
+    if not reference or not reference.startswith(("http://", "https://")):
+        return False
+    return not (_public_url and reference.startswith(_public_url))
 
 
 @_retry
