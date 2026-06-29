@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 
 _log = logging.getLogger(__name__)
 _initialized = False
-
-_CONTROL_FLOW_EXC = (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
 
 
 def init_sentry() -> bool:
@@ -46,11 +43,7 @@ def init_sentry() -> bool:
     return True
 
 
-def _enrich_event(event: dict, hint: dict) -> dict | None:
-    exc_info = (hint or {}).get("exc_info")
-    if exc_info and isinstance(exc_info[1], _CONTROL_FLOW_EXC):
-        return None
-
+def _enrich_event(event: dict, hint: dict) -> dict:
     try:
         from thecargo.context import get_audit_context
 
