@@ -50,3 +50,10 @@ def standard_responses(*codes: int, **overrides: str) -> dict[int, dict]:
         }
         for code in codes
     }
+
+
+def auth_responses(*codes: int, **overrides: str) -> dict[int, dict]:
+    return standard_responses(401, 403, *codes, **overrides)
+
+
+ERR_AUTH: Final = standard_responses(401, 403)
