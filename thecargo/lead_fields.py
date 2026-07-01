@@ -112,7 +112,14 @@ LEAD_FIELD_CATALOG: list[dict] = [
         "section": "LOCATION",
         "label": "PICKUP ZIP",
         "item_name": "origin_zip",
-        "labels": ["pickup zip code", "pickup zipcode", "pickup zip", "origin zip"],
+        "labels": [
+            "pickup zip code",
+            "pickup zipcode",
+            "pickup zip",
+            "origin zip code",
+            "origin zipcode",
+            "origin zip",
+        ],
     },
     {
         "key": "delivery_city",
@@ -147,6 +154,8 @@ LEAD_FIELD_CATALOG: list[dict] = [
             "delivery zip code",
             "delivery zipcode",
             "delivery zip",
+            "destination zip code",
+            "destination zipcode",
             "destination zip",
             "dest zip",
             "moving zip",
@@ -284,8 +293,9 @@ _LEGACY_ITEM_ALIASES: dict[str, str] = {"customer_name": "first_name"}
 DEFAULT_LABELS: dict[str, list[str]] = {spec["key"]: spec.get("labels", []) for spec in LEAD_FIELD_CATALOG}
 
 
-def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
+def _custom_labels_by_field(parsing_values: list[dict]) -> tuple[dict[str, list[str]], dict[tuple[str, str], int]]:
     grouped: dict[str, list[str]] = {}
+    index_by_label: dict[tuple[str, str], int] = {}
     for pv in parsing_values:
         item_name = pv.get("item_name", "")
         field_key = ITEM_TO_FIELD.get(item_name) or _LEGACY_ITEM_ALIASES.get(item_name)
@@ -294,13 +304,22 @@ def _custom_labels_by_field(parsing_values: list[dict]) -> dict[str, list[str]]:
         value = (pv.get("value") or "").strip().lower()
         if value:
             grouped.setdefault(field_key, []).append(value)
-    return grouped
+            vehicle_index = pv.get("vehicle_index")
+            if vehicle_index:
+                index_by_label[(field_key, value)] = int(vehicle_index)
+    return grouped, index_by_label
 
 
 _LABEL_TAIL = r"\s*(\d*)\s*:"
+_VEHICLE_PREFIX = re.compile(r"\b(?:vehicle|unit)\s*#?\s*(\d+)\b")
 
 
-def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[int, int, str, int, str]]:
+def _scan_labels(
+    text: str,
+    labels_by_key: dict[str, list[str]],
+    index_by_label: dict[tuple[str, str], int] | None = None,
+) -> list[tuple[int, int, str, int, str]]:
+    index_by_label = index_by_label or {}
     lowered = text.lower()
     hits: list[tuple[int, int, str, int, int, str]] = []
     for key, labels in labels_by_key.items():
@@ -310,8 +329,17 @@ def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[i
                 continue
             for match in re.finditer(re.escape(norm) + _LABEL_TAIL, lowered):
                 number = match.group(1)
-                index = int(number) - 1 if number else 0
-                hits.append((match.start(), match.end(), key, index, len(norm), norm))
+                if number:
+                    index = int(number) - 1
+                else:
+                    line_start = lowered.rfind("\n", 0, match.start()) + 1
+                    prefix = _VEHICLE_PREFIX.search(lowered, line_start, match.start())
+                    if prefix:
+                        index = int(prefix.group(1)) - 1
+                    else:
+                        configured = index_by_label.get((key, norm))
+                        index = (configured - 1) if configured else 0
+                hits.append((match.start(), match.end(), key, max(index, 0), len(norm), norm))
 
     hits.sort(key=lambda hit: (hit[0], -hit[4]))
     kept: list[tuple[int, int, str, int, str]] = []
@@ -325,10 +353,10 @@ def _scan_labels(text: str, labels_by_key: dict[str, list[str]]) -> list[tuple[i
 
 def parse_email_fields(text: str | None, parsing_values: list[dict] | None = None) -> dict:
     text = text or ""
-    custom = _custom_labels_by_field(parsing_values or [])
+    custom, index_by_label = _custom_labels_by_field(parsing_values or [])
     labels_by_key = {spec.key: (custom.get(spec.key) or DEFAULT_LABELS.get(spec.key, [])) for spec in FIELD_CATALOG}
 
-    kept = _scan_labels(text, labels_by_key)
+    kept = _scan_labels(text, labels_by_key, index_by_label)
 
     vehicle_keys = {spec.key for spec in FIELD_CATALOG if spec.section == "VEHICLE"}
 
@@ -343,7 +371,8 @@ def parse_email_fields(text: str | None, parsing_values: list[dict] | None = Non
         value = text[value_start:value_end].strip().strip(",;").strip()
         if not value:
             continue
-        found.setdefault(key, {}).setdefault(index, (value, text[start:value_end].strip(), label))
+        line_start = text.rfind("\n", 0, start) + 1
+        found.setdefault(key, {}).setdefault(index, (value, text[line_start:value_end].strip(), label))
 
     counts = {"matched": 0, "review": 0, "not_found": 0}
 

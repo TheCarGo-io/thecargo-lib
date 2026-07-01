@@ -304,7 +304,10 @@ class DashboardActivityResponse(BaseModel):
                         "actor": "JR",
                         "color": "#214690",
                         "text": '<b>Jessica Ramirez</b> updated <a href="#">Shipment HG10115</a>',
-                        "meta": "shipment · Pickup date 2026-06-30 · Delivery date 2026-06-30 · Available from 2026-05-10 → 2026-05-11",
+                        "meta": (
+                            "shipment · Pickup date 2026-06-30 · Delivery date 2026-06-30 "
+                            "· Available from 2026-05-10 → 2026-05-11"
+                        ),
                         "time": "12m",
                     },
                     {

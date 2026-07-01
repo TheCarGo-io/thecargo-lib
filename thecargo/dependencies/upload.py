@@ -66,7 +66,7 @@ class UploadResult:
     size_bytes: int
 
 
-_FILENAME_KEEP = re.compile(r"[^A-Za-z0-9._\- ]+")
+_FILENAME_KEEP = re.compile(r"[^A-Za-z0-9._\-]+")
 
 
 def safe_filename(name: str | None) -> str:
