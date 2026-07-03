@@ -16,7 +16,7 @@ _KNOWN_PATHS: frozenset[str] = frozenset(v.path for v in REGISTRY) | frozenset(
 # explicitly listed in REGISTRY (e.g. ``files``, ``stops`` as iterables
 # without dot-paths). Validators tolerate these.
 _KNOWN_ROOTS: frozenset[str] = frozenset(
-    {"customer", "shipment", "agent", "pickup", "delivery", "vehicles", "stops", "files", "tags", "_meta"}
+    {"customer", "shipment", "agent", "pickup", "delivery", "vehicles", "stops", "files", "tags", "card_url", "_meta"}
 )
 
 _REGISTRY_ROOTS: frozenset[str] = frozenset(v.path.split(".")[0].split("[")[0] for v in REGISTRY)
