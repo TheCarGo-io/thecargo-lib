@@ -336,20 +336,6 @@ REGISTRY: tuple[Variable, ...] = (
     *_expand("pricing", "Pricing", group="Price info", subgroup="Price information"),
     *_expand("payment", "Payment", group="Price info", subgroup="Payment details"),
     Variable(
-        path="payment_url",
-        label="Invoice link",
-        group="Links",
-        subgroup="Links",
-        description="Hosted invoice / pay page for the customer to settle this invoice.",
-    ),
-    Variable(
-        path="sign_url",
-        label="Sign link",
-        group="Links",
-        subgroup="Links",
-        description="Contract e-signature page URL.",
-    ),
-    Variable(
         path="online_booking",
         label="Online booking link",
         group="Links",
