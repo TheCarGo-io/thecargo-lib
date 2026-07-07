@@ -7,8 +7,9 @@ from enum import Enum
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import raiseload
 
 from thecargo.context import get_audit_context
 from thecargo.events import publisher
@@ -39,6 +40,7 @@ class Auditable:
     __audit_ignore__: ClassVar[frozenset[str]] = frozenset({"updated_at"})
     __audit_significant__: ClassVar[frozenset[str]] = frozenset()
     __audit_lifecycle_field__: ClassVar[str | None] = None
+    __audit_refs__: ClassVar[dict[str, str]] = {}
 
     def __audit_label__(self) -> str | None:
         return None
@@ -164,6 +166,59 @@ def _lifecycle(obj: "Auditable", old: dict | None, new: dict | None, changed: li
     }
 
 
+def _pending_refs(obj: "Auditable", action: str, changed: list[str] | None) -> list[dict[str, Any]]:
+    refs_map = obj.__audit_refs__
+    if not refs_map:
+        return []
+    committed = sa_inspect(obj).committed_state
+    mapper_rels = sa_inspect(obj).mapper.relationships
+    out: list[dict[str, Any]] = []
+    for col, rel_name in refs_map.items():
+        if action == "update" and (not changed or col not in changed):
+            continue
+        try:
+            target_class = mapper_rels[rel_name].mapper.class_
+        except (KeyError, AttributeError):
+            continue
+        if action == "create":
+            old_id, new_id = None, getattr(obj, col, None)
+        elif action == "delete":
+            old_id, new_id = getattr(obj, col, None), None
+        else:
+            old_id = committed.get(col) if col in committed else None
+            new_id = getattr(obj, col, None)
+        out.append(
+            {
+                "col": col,
+                "rel_name": rel_name,
+                "target_class": target_class,
+                "old_id": str(old_id) if old_id is not None else None,
+                "new_id": str(new_id) if new_id is not None else None,
+            }
+        )
+    return out
+
+
+def _resolve_row_label(row: Any) -> str | None:
+    if isinstance(row, Auditable):
+        try:
+            label = row.__audit_label__()
+            if label:
+                return label
+        except Exception:
+            pass
+    first = getattr(row, "first_name", None)
+    last = getattr(row, "last_name", None)
+    combined = " ".join(p for p in (first, last) if p)
+    if combined:
+        return combined
+    for attr in ("display_name", "name", "title", "code", "email"):
+        v = getattr(row, attr, None)
+        if v:
+            return str(v)
+    return None
+
+
 def _build_payload(
     action: str,
     obj: "Auditable",
@@ -181,7 +236,7 @@ def _build_payload(
     resource = obj.__audit_resource__
     resource_id = str(obj_id) if obj_id is not None else None
     root_resource, root_id = _root_of(obj, resource, resource_id)
-    return {
+    payload: dict[str, Any] = {
         "audit_id": str(uuid4()),
         "service": _SERVICE_NAME or "unknown",
         "organization_id": _resolve_org_id(org_id, ctx),
@@ -202,6 +257,10 @@ def _build_payload(
         "user_agent": (ctx.user_agent[:500] if ctx.user_agent else None),
         "created_at": now_ny().isoformat(),
     }
+    pending = _pending_refs(obj, action, changed)
+    if pending:
+        payload["_pending_refs"] = pending
+    return payload
 
 
 async def emit_audit_event(
@@ -246,6 +305,7 @@ async def emit_audit_event(
 
 
 async def _publish_one(payload: dict[str, Any]) -> None:
+    payload.pop("_pending_refs", None)
     routing_key = f"audit.{payload['service']}.{payload['action']}"
     try:
         await publisher.publish(routing_key, payload)
@@ -253,7 +313,61 @@ async def _publish_one(payload: dict[str, Any]) -> None:
         logger.exception("audit publish failed: routing_key=%s", routing_key)
 
 
-def register_audit_listeners(session_class) -> None:
+async def _resolve_refs(session_maker, staged: list[dict[str, Any]]) -> None:
+    by_class: dict[type, set[str]] = {}
+    for payload in staged:
+        for ref in payload.get("_pending_refs", []):
+            uuids = by_class.setdefault(ref["target_class"], set())
+            if ref["old_id"]:
+                uuids.add(ref["old_id"])
+            if ref["new_id"]:
+                uuids.add(ref["new_id"])
+    if not by_class:
+        return
+
+    labels: dict[tuple[type, str], str] = {}
+    async with session_maker() as session:
+        for cls, uuids in by_class.items():
+            if not uuids:
+                continue
+            try:
+                rows = (
+                    (await session.execute(select(cls).where(cls.id.in_(uuids)).options(raiseload("*"))))
+                    .scalars()
+                    .all()
+                )
+            except Exception:
+                logger.exception("audit label lookup failed for class=%s", cls.__name__)
+                continue
+            for row in rows:
+                lbl = _resolve_row_label(row)
+                if lbl:
+                    labels[(cls, str(row.id))] = lbl[:200]
+
+    for payload in staged:
+        for ref in payload.get("_pending_refs", []):
+            rel = ref["rel_name"]
+            if ref["old_id"] and payload.get("old_data") is not None:
+                lbl = labels.get((ref["target_class"], ref["old_id"]))
+                if lbl:
+                    payload["old_data"][rel] = lbl
+            if ref["new_id"] and payload.get("new_data") is not None:
+                lbl = labels.get((ref["target_class"], ref["new_id"]))
+                if lbl:
+                    payload["new_data"][rel] = lbl
+
+
+async def _resolve_and_publish(session_maker, staged: list[dict[str, Any]]) -> None:
+    if session_maker is not None:
+        try:
+            await _resolve_refs(session_maker, staged)
+        except Exception:
+            logger.exception("audit ref resolution failed; publishing bare payloads")
+    for payload in staged:
+        await _publish_one(payload)
+
+
+def register_audit_listeners(session_class, session_maker=None) -> None:
 
     @event.listens_for(session_class, "before_flush")
     def _capture(session, flush_context, instances):
@@ -287,8 +401,7 @@ def register_audit_listeners(session_class) -> None:
                 len(staged),
             )
             return
-        for payload in staged:
-            loop.create_task(_publish_one(payload))
+        loop.create_task(_resolve_and_publish(session_maker, staged))
 
     @event.listens_for(session_class, "after_rollback")
     def _drop_on_rollback(session):
