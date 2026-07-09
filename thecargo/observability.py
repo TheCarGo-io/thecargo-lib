@@ -18,11 +18,24 @@ def init_sentry() -> bool:
 
     try:
         import sentry_sdk
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.starlette import StarletteIntegration
     except ImportError:
         _log.warning("SENTRY_DSN is set but sentry-sdk is not installed; error tracking disabled")
         return False
+
+    integrations = []
+    try:
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        integrations.extend([StarletteIntegration(), FastApiIntegration()])
+    except ImportError:
+        pass
+    try:
+        from sentry_sdk.integrations.celery import CeleryIntegration
+
+        integrations.append(CeleryIntegration(monitor_beat_tasks=False, propagate_traces=False))
+    except ImportError:
+        pass
 
     service = os.environ.get("SERVICE_NAME", "unknown")
     environment = os.environ.get("ENVIRONMENT") or os.environ.get("ENV") or "production"
@@ -32,7 +45,7 @@ def init_sentry() -> bool:
         environment=environment,
         server_name=service,
         release=os.environ.get("RELEASE_SHA") or None,
-        integrations=[StarletteIntegration(), FastApiIntegration()],
+        integrations=integrations,
         traces_sample_rate=0.0,
         send_default_pii=False,
         max_request_body_size="small",
@@ -74,3 +87,18 @@ def capture_exception(exc: BaseException) -> None:
         sentry_sdk.capture_exception(exc)
     except Exception:
         pass
+
+
+def install_celery_signals() -> bool:
+    try:
+        from celery.signals import worker_process_init
+    except ImportError:
+        return False
+
+    def _init_in_worker(**_kwargs) -> None:
+        global _initialized
+        _initialized = False
+        init_sentry()
+
+    worker_process_init.connect(_init_in_worker, weak=False)
+    return True
