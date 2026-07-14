@@ -69,6 +69,8 @@ SEVERITY_BLOCK = "block"
 SEVERITY_WARN = "warn"
 SEVERITY_INFO = "info"
 
+_OPTOUT_FOOTER = "Reply STOP to opt out"
+
 
 @dataclass(frozen=True)
 class SmsSegments:
@@ -115,6 +117,13 @@ def has_fancy_font(text: str | None) -> bool:
 
 def has_optout_language(text: str | None) -> bool:
     return bool(_OPTOUT_RE.search(text or ""))
+
+
+def ensure_optout_footer(text: str | None) -> str:
+    body = (text or "").rstrip()
+    if not body or has_optout_language(body):
+        return body
+    return f"{body} {_OPTOUT_FOOTER}"
 
 
 def has_url_shortener(text: str | None) -> bool:
