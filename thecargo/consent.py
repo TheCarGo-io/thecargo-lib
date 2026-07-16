@@ -87,6 +87,39 @@ async def load_consent_state(
     return list(result.scalars().all())
 
 
+def _consent_cache_key(organization_id: UUID, customer_number: str) -> tuple:
+    return ("consent_state", str(organization_id), customer_number)
+
+
+async def prefetch_consent_states(
+    db: AsyncSession,
+    organization_id: UUID,
+    customer_numbers: Iterable[str],
+    cache: dict,
+) -> None:
+    """Load every number's consent history in one query and seed `cache`.
+
+    Pass the same dict to check_contactability(cache=...) so a bulk send resolves
+    N recipients with 1 query instead of N.
+    """
+    normalized = {normalize_phone(n) or n for n in customer_numbers if n}
+    if not normalized:
+        return
+    stmt = (
+        select(ConsentRecord)
+        .where(
+            ConsentRecord.organization_id == organization_id,
+            ConsentRecord.customer_number.in_(normalized),
+        )
+        .order_by(ConsentRecord.created_at.asc())
+    )
+    grouped: dict[str, list[ConsentRecord]] = {number: [] for number in normalized}
+    for row in (await db.execute(stmt)).scalars().all():
+        grouped.setdefault(row.customer_number, []).append(row)
+    for number, records in grouped.items():
+        cache[_consent_cache_key(organization_id, number)] = records
+
+
 def _latest_by_bucket(records: Iterable[ConsentRecord]) -> dict[tuple[str, str, str | None], ConsentRecord]:
     out: dict[tuple[str, str, str | None], ConsentRecord] = {}
     for row in records:
@@ -230,7 +263,7 @@ async def check_contactability(
     normalized_line = normalize_phone(our_line) if our_line else None
 
     if cache is not None:
-        cache_key = ("consent_state", str(organization_id), normalized_customer)
+        cache_key = _consent_cache_key(organization_id, normalized_customer)
         records = cache.get(cache_key)
         if records is None:
             records = await load_consent_state(db, organization_id, normalized_customer)
