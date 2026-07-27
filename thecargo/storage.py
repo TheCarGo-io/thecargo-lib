@@ -146,55 +146,73 @@ def get_public_url(path: str) -> str:
     return f"{_public_url}/{_bucket}/{path}"
 
 
-def object_path_from_url(url: str) -> str:
+def _is_r2_host(host: str) -> bool:
+    return host.endswith((".r2.dev", ".r2.cloudflarestorage.com"))
+
+
+def _is_own_host(host: str) -> bool:
+    own = urlparse(_public_url).netloc if _public_url else ""
+    return bool(host) and (host == own or _is_r2_host(host))
+
+
+def bucket_and_path_from_url(url: str) -> tuple[str, str]:
     if not url:
-        return ""
-    if _public_url and url.startswith(_public_url):
-        url = url[len(_public_url) :]
-    url = url.lstrip("/")
-    if _bucket and url.startswith(f"{_bucket}/"):
-        url = url[len(_bucket) + 1 :]
-    return url
+        return _bucket, ""
+    if url.startswith(("http://", "https://")):
+        parsed = urlparse(url)
+        if not _is_own_host(parsed.netloc):
+            return _bucket, ""
+        rest = parsed.path.lstrip("/")
+        head, _, key = rest.partition("/")
+        return (head, key) if key else (_bucket, rest)
+    path = url.lstrip("/")
+    if _bucket and path.startswith(f"{_bucket}/"):
+        path = path[len(_bucket) + 1 :]
+    return _bucket, path
+
+
+def object_path_from_url(url: str) -> str:
+    return bucket_and_path_from_url(url)[1]
 
 
 def is_external_url(reference: str) -> bool:
     if not reference or not reference.startswith(("http://", "https://")):
         return False
-    return not (_public_url and reference.startswith(_public_url))
+    return not _is_own_host(urlparse(reference).netloc)
 
 
 @_retry
-def presigned_get_url(path: str, expires_seconds: int = 600) -> str:
+def presigned_get_url(path: str, expires_seconds: int = 600, bucket: str | None = None) -> str:
     if _signing_client is None:
         raise RuntimeError("R2 storage not initialized")
     return _signing_client.generate_presigned_url(
-        "get_object", Params={"Bucket": _bucket, "Key": path}, ExpiresIn=expires_seconds
+        "get_object", Params={"Bucket": bucket or _bucket, "Key": path}, ExpiresIn=expires_seconds
     )
 
 
 @_retry
-def download_object_bytes(path: str) -> tuple[bytes, str]:
+def download_object_bytes(path: str, bucket: str | None = None) -> tuple[bytes, str]:
     if _client is None:
         raise RuntimeError("R2 storage not initialized")
-    resp = _client.get_object(Bucket=_bucket, Key=path)
+    resp = _client.get_object(Bucket=bucket or _bucket, Key=path)
     data = resp["Body"].read()
     content_type = (resp.get("ContentType") or "application/octet-stream").split(";")[0]
     return data, content_type
 
 
 @_retry
-def delete_object(path: str):
+def delete_object(path: str, bucket: str | None = None):
     if _client is None:
         raise RuntimeError("R2 storage not initialized")
-    _client.delete_object(Bucket=_bucket, Key=path)
+    _client.delete_object(Bucket=bucket or _bucket, Key=path)
 
 
 @_retry
-def object_exists(path: str) -> bool:
+def object_exists(path: str, bucket: str | None = None) -> bool:
     if _client is None:
         return False
     try:
-        _client.head_object(Bucket=_bucket, Key=path)
+        _client.head_object(Bucket=bucket or _bucket, Key=path)
         return True
     except ClientError:
         return False
