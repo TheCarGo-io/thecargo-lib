@@ -28,13 +28,13 @@ def init_sentry() -> bool:
         from sentry_sdk.integrations.starlette import StarletteIntegration
 
         integrations.extend([StarletteIntegration(), FastApiIntegration()])
-    except ImportError:
+    except Exception:
         pass
     try:
         from sentry_sdk.integrations.celery import CeleryIntegration
 
         integrations.append(CeleryIntegration(monitor_beat_tasks=False, propagate_traces=False))
-    except ImportError:
+    except Exception:
         pass
 
     service = os.environ.get("SERVICE_NAME", "unknown")

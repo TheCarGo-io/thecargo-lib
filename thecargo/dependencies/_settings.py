@@ -1,6 +1,7 @@
 import os
 
 _jwt_secret: str | None = None
+_portal_jwt_secret: str | None = None
 _redis_url: str | None = None
 _redis_client = None
 
@@ -14,6 +15,17 @@ def get_jwt_secret() -> str:
     if _jwt_secret:
         return _jwt_secret
     return os.environ.get("JWT_SECRET_KEY", "change-me")
+
+
+def set_portal_jwt_secret(secret: str):
+    global _portal_jwt_secret
+    _portal_jwt_secret = secret
+
+
+def get_portal_jwt_secret() -> str:
+    if _portal_jwt_secret:
+        return _portal_jwt_secret
+    return os.environ.get("PORTAL_JWT_SECRET_KEY", "change-me-portal")
 
 
 def set_redis_url(url: str):
