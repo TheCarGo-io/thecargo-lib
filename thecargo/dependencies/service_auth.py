@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
 
@@ -12,5 +14,5 @@ def set_service_secret(secret: str):
 
 
 async def verify_service_auth(secret: str | None = Depends(service_secret_header)):
-    if not _service_secret or not secret or secret != _service_secret:
+    if not _service_secret or not secret or not hmac.compare_digest(secret, _service_secret):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid service secret")
