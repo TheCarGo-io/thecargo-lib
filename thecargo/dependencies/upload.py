@@ -85,6 +85,53 @@ def _check_mime(content_type: str, exact: frozenset[str], prefixes: tuple[str, .
     raise HTTPException(415, f"Unsupported MIME type: {content_type}")
 
 
+_MARKUP_PREFIXES: tuple[bytes, ...] = (
+    b"<?xml",
+    b"<!doctype",
+    b"<html",
+    b"<svg",
+    b"<script",
+    b"<!--",
+    b"<?php",
+)
+
+
+def _sniff(raw: bytes) -> str | None:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+        return "image/webp"
+    if raw.startswith(b"%PDF-"):
+        return "application/pdf"
+    if raw.startswith(b"PK\x03\x04"):
+        return "application/zip"
+    if raw.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "application/msword"
+    return None
+
+
+def _looks_like_markup(raw: bytes) -> bool:
+    return raw[:512].lstrip().lower().startswith(_MARKUP_PREFIXES)
+
+
+def _resolve_mime(raw: bytes, declared: str, exact: frozenset[str], prefixes: tuple[str, ...]) -> str:
+    sniffed = _sniff(raw)
+    if sniffed is None:
+        if _looks_like_markup(raw):
+            raise HTTPException(415, "Markup and script uploads are not accepted")
+        _check_mime(declared, exact, prefixes)
+        return declared
+    if sniffed == "application/zip" and (declared == "application/zip" or declared.startswith("application/vnd.")):
+        _check_mime(declared, exact, prefixes)
+        return declared
+    _check_mime(sniffed, exact, prefixes)
+    return sniffed
+
+
 PathBuilder = Callable[[str, str], str]
 
 
@@ -104,8 +151,8 @@ async def upload_to_storage(
         limit_mb = max_bytes // (1024 * 1024)
         raise HTTPException(413, f"File exceeds {limit_mb} MB limit")
 
-    content_type = file.content_type or "application/octet-stream"
-    _check_mime(content_type, allowed_exact, allowed_prefixes)
+    declared = file.content_type or "application/octet-stream"
+    content_type = _resolve_mime(raw, declared, allowed_exact, allowed_prefixes)
 
     safe = safe_filename(file.filename)
     storage_path = path_builder(safe, content_type)

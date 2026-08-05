@@ -92,7 +92,7 @@ async def get_current_user(
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
-    if payload.get("aud") == "portal":
+    if payload.get("aud") == "portal" or payload.get("type") != "access":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
     user = TokenPayload(

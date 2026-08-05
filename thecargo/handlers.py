@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -13,6 +14,8 @@ from thecargo.observability import capture_exception as _sentry_capture
 from thecargo.observability import init_sentry
 
 _log = logging.getLogger(__name__)
+
+_MIRRORED_UPSTREAM_STATUSES = frozenset({400, 409, 422})
 
 
 def _envelope(code: str, key: str, lang: str, params: dict | None, fallback: str) -> dict:
@@ -106,6 +109,53 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     return JSONResponse(status_code=exc.status_code, content=envelope)
 
 
+def _upstream_detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text[:500] or "Upstream request failed"
+    if isinstance(body, dict):
+        for field in ("message", "detail", "error"):
+            value = body.get(field)
+            if isinstance(value, str) and value:
+                return value
+    return str(body)[:500]
+
+
+def _upstream_target(exc: httpx.HTTPError) -> str:
+    try:
+        return exc.request.url.host
+    except RuntimeError:
+        return "upstream"
+
+
+async def upstream_exception_handler(request: Request, exc: httpx.HTTPError) -> JSONResponse:
+    lang = get_language(request)
+    response = getattr(exc, "response", None)
+    upstream_status = response.status_code if response is not None else None
+
+    if upstream_status in _MIRRORED_UPSTREAM_STATUSES:
+        envelope = _envelope(
+            f"HTTP_{upstream_status}",
+            f"common.http_{upstream_status}",
+            lang,
+            {},
+            _upstream_detail(response),
+        )
+        return JSONResponse(status_code=upstream_status, content=envelope)
+
+    _sentry_capture(exc)
+    _log.error("Upstream call from %s %s failed: %s", request.method, request.url.path, exc)
+    envelope = _envelope(
+        "UPSTREAM_UNAVAILABLE",
+        "common.upstream_unavailable",
+        lang,
+        {"service": _upstream_target(exc)},
+        "Upstream service is unavailable",
+    )
+    return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content=envelope)
+
+
 async def fallback_handler(request: Request, exc: Exception) -> JSONResponse:
     _sentry_capture(exc)
     _log.exception("Unhandled exception on %s %s", request.method, request.url.path)
@@ -127,4 +177,5 @@ def register_handlers(app: FastAPI, locale_dir: Path | str | None = None) -> Non
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
+    app.add_exception_handler(httpx.HTTPError, upstream_exception_handler)
     app.add_exception_handler(Exception, fallback_handler)

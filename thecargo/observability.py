@@ -56,7 +56,10 @@ def init_sentry() -> bool:
     return True
 
 
-def _enrich_event(event: dict, hint: dict) -> dict:
+def _enrich_event(event: dict, hint: dict) -> dict | None:
+    record = (hint or {}).get("log_record")
+    if record is not None and not record.exc_info:
+        return None
     try:
         from thecargo.context import get_audit_context
 
