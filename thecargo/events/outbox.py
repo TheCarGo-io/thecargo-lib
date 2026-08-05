@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 _OUTBOX_KEY = "_outbox_pending"
 
+_INFLIGHT: set[asyncio.Task] = set()
+"""Strong references to in-flight publishes.
+
+The event loop only holds weak references to tasks, so a task dropped here
+could be collected between the RabbitMQ publish and the mark-published write.
+The row would stay pending and the relay would republish an event that had
+already gone out.
+"""
+
 RELAY_GRACE_SECONDS = 30
 RELAY_BATCH = 200
 RELAY_MAX_ATTEMPTS = 10
@@ -29,10 +38,18 @@ def _publisher_ready() -> bool:
     return channel is not None and not channel.is_closed
 
 
-async def _deliver(routing_key: str, payload: dict) -> None:
+async def _deliver(routing_key: str, payload: dict, event_id) -> None:
+    """Hand one outbox row to RabbitMQ, stamped with the row id.
+
+    Delivery is at-least-once — the immediate publish and the mark-published
+    write are not one atomic step, so the relay can replay a row that already
+    went out. The stamp is the same on every attempt, which is what lets a
+    consumer recognise the replay and drop it.
+    """
     if not _publisher_ready():
         raise RuntimeError("RabbitMQ not connected")
-    await publisher.publish(routing_key, payload)
+    message = payload if payload.get("event_id") else {**payload, "event_id": str(event_id)}
+    await publisher.publish(routing_key, message)
 
 
 class OutboxEvent(BaseModel):
@@ -52,22 +69,36 @@ def publish_event(db: AsyncSession, routing_key: str, payload: dict) -> None:
     db.sync_session.info.setdefault(_OUTBOX_KEY, []).append(row)
 
 
+async def _mark_published(session_factory, event_id) -> None:
+    async with session_factory() as session:
+        await session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.id == event_id)
+            .values(status="published", published_at=now_ny(), attempts=OutboxEvent.attempts + 1)
+        )
+        await session.commit()
+
+
 async def _publish_one(session_factory, event_id, routing_key: str, payload: dict) -> None:
+    """Publish one staged row now, instead of waiting out the relay's grace window.
+
+    Losing the mark after a successful delivery is not a lost event, it is a
+    duplicate one: the relay finds the row still pending and sends it again.
+    So the mark is shielded from cancellation, and a cancelled mark is logged
+    rather than swallowed — ``except Exception`` never sees ``CancelledError``.
+    """
     try:
-        await _deliver(routing_key, payload)
+        await _deliver(routing_key, payload, event_id)
     except Exception as exc:
         logger.warning("outbox immediate publish failed (relay will retry): %s %s", routing_key, exc)
         return
     try:
-        async with session_factory() as session:
-            await session.execute(
-                update(OutboxEvent)
-                .where(OutboxEvent.id == event_id)
-                .values(status="published", published_at=now_ny(), attempts=OutboxEvent.attempts + 1)
-            )
-            await session.commit()
+        await asyncio.shield(_mark_published(session_factory, event_id))
+    except asyncio.CancelledError:
+        logger.warning("outbox mark-published cancelled for %s (relay will republish it)", event_id)
+        raise
     except Exception:
-        logger.exception("outbox mark-published failed for %s (relay will reconcile)", event_id)
+        logger.exception("outbox mark-published failed for %s (relay will republish it)", event_id)
 
 
 def register_outbox_listeners(session_class, session_factory) -> None:
@@ -83,7 +114,9 @@ def register_outbox_listeners(session_class, session_factory) -> None:
             logger.warning("outbox publish deferred to relay: no running loop (count=%d)", len(staged))
             return
         for row in staged:
-            loop.create_task(_publish_one(session_factory, row.id, row.routing_key, row.payload))
+            task = loop.create_task(_publish_one(session_factory, row.id, row.routing_key, row.payload))
+            _INFLIGHT.add(task)
+            task.add_done_callback(_INFLIGHT.discard)
 
     @event.listens_for(session_class, "after_rollback")
     def _drop(session):
@@ -117,7 +150,7 @@ async def relay_once(session_factory) -> int:
         published = 0
         for row in rows:
             try:
-                await _deliver(row.routing_key, row.payload)
+                await _deliver(row.routing_key, row.payload, row.id)
             except Exception as exc:
                 row.attempts += 1
                 row.last_error = str(exc)[:500]
