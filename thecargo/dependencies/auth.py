@@ -106,6 +106,8 @@ async def get_current_user(
         role_version=payload.get("rv", 0),
     )
 
+    await _enforce_user_revocation(user, payload.get("iat"))
+
     # Fail-fast if the role's permissions changed since this token was issued.
     # Platform superusers bypass the check (they keep a stable role_version=0).
     if user.role_id and not user.is_superuser:
@@ -116,6 +118,27 @@ async def get_current_user(
 
 def role_version_key(role_id) -> str:
     return f"role:{role_id}:version"
+
+
+def user_revocation_key(user_id) -> str:
+    return f"user:{user_id}:revoked_at"
+
+
+async def _enforce_user_revocation(user: "TokenPayload", issued_at) -> None:
+    from thecargo.cache import cache_get
+
+    cached = await cache_get(user_revocation_key(user.user_id))
+    if cached is None or issued_at is None:
+        return
+
+    if int(issued_at) < int(cached):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "token_revoked",
+                "message": "Session revoked; please sign in again",
+            },
+        )
 
 
 async def _enforce_role_version(user: "TokenPayload") -> None:
