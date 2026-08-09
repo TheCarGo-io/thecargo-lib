@@ -29,7 +29,6 @@ TELNYX_ERROR_REASONS: dict[str, DeliverabilityReason] = {
     "30006": DeliverabilityReason.LANDLINE,
     "40012": DeliverabilityReason.INVALID,
     "40310": DeliverabilityReason.INVALID,
-    "40008": DeliverabilityReason.INVALID,
     "30005": DeliverabilityReason.INVALID,
     "10001": DeliverabilityReason.INVALID,
     "10002": DeliverabilityReason.INVALID,
