@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import event, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import raiseload
+from sqlalchemy.orm.base import NO_VALUE
 
 from thecargo.context import get_audit_context
 from thecargo.events import publisher
@@ -187,6 +188,10 @@ def _pending_refs(obj: "Auditable", action: str, changed: list[str] | None) -> l
         else:
             old_id = committed.get(col) if col in committed else None
             new_id = getattr(obj, col, None)
+        if old_id is NO_VALUE:
+            old_id = None
+        if new_id is NO_VALUE:
+            new_id = None
         out.append(
             {
                 "col": col,
