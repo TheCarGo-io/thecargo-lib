@@ -25,6 +25,7 @@ class TokenPayload:
     # issued. Compared against the live value in Redis on every request so a
     # stale token can be rejected with 401 token_stale.
     role_version: int = 0
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,14 +105,10 @@ async def get_current_user(
         permissions=_decode_permissions(payload.get("p", {})),
         stage_filters=_decode_stage_filters(payload.get("ps", {})),
         role_version=payload.get("rv", 0),
+        session_id=payload.get("sid"),
     )
 
-    await _enforce_user_revocation(user, payload.get("iat"))
-
-    # Fail-fast if the role's permissions changed since this token was issued.
-    # Platform superusers bypass the check (they keep a stable role_version=0).
-    if user.role_id and not user.is_superuser:
-        await _enforce_role_version(user)
+    await _enforce_token_state(user, payload.get("iat"))
 
     return user
 
@@ -124,14 +121,24 @@ def user_revocation_key(user_id) -> str:
     return f"user:{user_id}:revoked_at"
 
 
-async def _enforce_user_revocation(user: "TokenPayload", issued_at) -> None:
-    from thecargo.cache import cache_get
+def active_session_key(user_id) -> str:
+    return f"user:{user_id}:sid"
 
-    cached = await cache_get(user_revocation_key(user.user_id))
-    if cached is None or issued_at is None:
-        return
 
-    if int(issued_at) < int(cached):
+async def _enforce_token_state(user: "TokenPayload", issued_at) -> None:
+    from thecargo.cache import cache_mget
+
+    check_role = bool(user.role_id) and not user.is_superuser
+
+    keys = [user_revocation_key(user.user_id), active_session_key(user.user_id)]
+    if check_role:
+        keys.append(role_version_key(user.role_id))
+
+    values = await cache_mget(*keys)
+    revoked_at, active_sid = values[0], values[1]
+    live_role_version = values[2] if check_role else None
+
+    if revoked_at is not None and issued_at is not None and int(issued_at) < int(revoked_at):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -140,15 +147,16 @@ async def _enforce_user_revocation(user: "TokenPayload", issued_at) -> None:
             },
         )
 
+    if user.session_id and active_sid and user.session_id != active_sid:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "session_superseded",
+                "message": "Signed in on another device; this session was closed",
+            },
+        )
 
-async def _enforce_role_version(user: "TokenPayload") -> None:
-    from thecargo.cache import cache_get
-
-    cached = await cache_get(role_version_key(user.role_id))
-    if cached is None:
-        return
-
-    if int(cached) != int(user.role_version):
+    if live_role_version is not None and int(live_role_version) != int(user.role_version):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             detail={

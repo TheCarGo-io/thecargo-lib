@@ -2,6 +2,7 @@ from .communication import CommunicationClient, CommunicationClientError
 from .portal import PortalClient
 from .service import ServiceClient
 from .shipment import ShipmentClient
+from .socket import SocketClient
 
 __all__ = [
     "CommunicationClient",
@@ -9,4 +10,5 @@ __all__ = [
     "PortalClient",
     "ServiceClient",
     "ShipmentClient",
+    "SocketClient",
 ]

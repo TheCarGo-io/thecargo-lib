@@ -76,3 +76,13 @@ async def cache_get(key: str) -> str | None:
         return await redis.get(key)
     except Exception:
         return None
+
+
+async def cache_mget(*keys: str) -> list[str | None]:
+    if not keys:
+        return []
+    try:
+        redis = await get_redis()
+        return await redis.mget(*keys)
+    except Exception:
+        return [None] * len(keys)
