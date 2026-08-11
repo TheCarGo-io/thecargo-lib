@@ -31,7 +31,6 @@ def test_telnyx_codes_classify_to_expected_reasons():
         "40001": DeliverabilityReason.LANDLINE,
         "40012": DeliverabilityReason.INVALID,
         "40310": DeliverabilityReason.INVALID,
-        "40008": DeliverabilityReason.INVALID,
         "10001": DeliverabilityReason.INVALID,
         "10002": DeliverabilityReason.INVALID,
         "40300": DeliverabilityReason.OPTED_OUT,
@@ -47,7 +46,18 @@ def test_line_type_overrides_to_landline():
 
 
 def test_transient_and_sender_codes_never_flag_the_number():
-    for code in ("40002", "40003", "40005", "40006", "40011", "40013", "40015", "40017"):
+    for code in (
+        "40002",
+        "40003",
+        "40005",
+        "40006",
+        "40008",
+        "40011",
+        "40013",
+        "40014",
+        "40015",
+        "40017",
+    ):
         assert classify_error_code(code) is None
 
 
