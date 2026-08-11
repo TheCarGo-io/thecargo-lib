@@ -29,11 +29,13 @@ class SocketClient(ServiceClient):
         user_id: UUID | str,
         *,
         keep_sid: UUID | str | None = None,
+        sid: UUID | str | None = None,
         reason: str = "session_revoked",
     ) -> int:
         body = {
             "user_id": str(user_id),
             "keep_sid": str(keep_sid) if keep_sid else None,
+            "sid": str(sid) if sid else None,
             "reason": reason,
         }
         result = await self._safe_post("/api/kick", body)
