@@ -18,3 +18,10 @@ class PortalClient(ServiceClient):
     async def customer_accounts(self, customer_id: UUID) -> list[str]:
         data = await self.get(f"/api/internal/portal/customers/{customer_id}/accounts")
         return data.get("account_ids", [])
+
+    async def customer_states(self, org_id: UUID, customer_ids: list[UUID]) -> dict[str, dict]:
+        data = await self.post(
+            "/api/internal/portal/customers/status",
+            {"organization_id": str(org_id), "customer_ids": [str(cid) for cid in customer_ids]},
+        )
+        return data.get("states", {})
