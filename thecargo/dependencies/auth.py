@@ -222,3 +222,37 @@ def check_stage_permission(user: TokenPayload, stage: str, action: str) -> Scope
         )
 
     return Scope(scope=scope, user_id=user.user_id, team_id=user.team_id)
+
+
+ADMIN_AUDIENCE = "admin-console"
+
+
+@dataclass(frozen=True)
+class AdminPayload:
+    user_id: UUID
+    email: str | None = None
+    name: str | None = None
+
+
+async def get_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> AdminPayload:
+
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            _get_secret_key(),
+            algorithms=["HS256"],
+            audience=ADMIN_AUDIENCE,
+        )
+    except jwt.PyJWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    if payload.get("type") != "access":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    return AdminPayload(
+        user_id=UUID(payload["sub"]),
+        email=payload.get("email"),
+        name=payload.get("name"),
+    )
