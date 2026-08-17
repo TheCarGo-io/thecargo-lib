@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+
 from thecargo.consent import (
     ConsentChannel,
     ConsentScope,
