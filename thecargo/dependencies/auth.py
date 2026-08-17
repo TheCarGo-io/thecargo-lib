@@ -125,6 +125,10 @@ def active_sessions_key(user_id) -> str:
     return f"user:{user_id}:sids"
 
 
+def session_pending_key(session_id) -> str:
+    return f"session:{session_id}:pending"
+
+
 async def _token_state(user: "TokenPayload", check_role: bool) -> list:
     from thecargo.dependencies._settings import get_redis
 
@@ -134,19 +138,20 @@ async def _token_state(user: "TokenPayload", check_role: bool) -> list:
         pipe.get(user_revocation_key(user.user_id))
         pipe.zcard(active_sessions_key(user.user_id))
         pipe.zscore(active_sessions_key(user.user_id), user.session_id or "")
+        pipe.get(session_pending_key(user.session_id or ""))
         if check_role:
             pipe.get(role_version_key(user.role_id))
         return await pipe.execute()
     except Exception:
-        return [None, 0, None, None]
+        return [None, 0, None, None, None]
 
 
 async def _enforce_token_state(user: "TokenPayload", issued_at) -> None:
     check_role = bool(user.role_id) and not user.is_superuser
 
     values = await _token_state(user, check_role)
-    revoked_at, session_count, session_member = values[0], values[1], values[2]
-    live_role_version = values[3] if check_role else None
+    revoked_at, session_count, session_member, pending = values[0], values[1], values[2], values[3]
+    live_role_version = values[4] if check_role else None
 
     if revoked_at is not None and issued_at is not None and int(issued_at) < int(revoked_at):
         raise HTTPException(
@@ -154,6 +159,15 @@ async def _enforce_token_state(user: "TokenPayload", issued_at) -> None:
             detail={
                 "code": "token_revoked",
                 "message": "Session revoked; please sign in again",
+            },
+        )
+
+    if user.session_id and pending is not None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "device_approval_pending",
+                "message": "Waiting for one of your other devices to approve this sign-in",
             },
         )
 
