@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -56,9 +57,24 @@ def init_sentry() -> bool:
     return True
 
 
+def _is_cancellation(exc: BaseException | None) -> bool:
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, asyncio.CancelledError):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def _enrich_event(event: dict, hint: dict) -> dict | None:
-    record = (hint or {}).get("log_record")
+    hint = hint or {}
+    record = hint.get("log_record")
     if record is not None and not record.exc_info:
+        return None
+
+    exc_info = hint.get("exc_info") or (record.exc_info if record is not None else None)
+    if exc_info and _is_cancellation(exc_info[1]):
         return None
     try:
         from thecargo.context import get_audit_context
