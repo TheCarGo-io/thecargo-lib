@@ -31,6 +31,7 @@ class CancelOnDisconnectMiddleware:
         queue: asyncio.Queue[Message] = asyncio.Queue()
         disconnected = asyncio.Event()
         started = False
+        completed = False
 
         async def pump() -> None:
             while True:
@@ -44,9 +45,12 @@ class CancelOnDisconnectMiddleware:
             return await queue.get()
 
         async def tracking_send(message: Message) -> None:
-            nonlocal started
-            if message["type"] == "http.response.start":
+            nonlocal started, completed
+            message_type = message["type"]
+            if message_type == "http.response.start":
                 started = True
+            elif message_type == "http.response.body" and not message.get("more_body", False):
+                completed = True
             await send(message)
 
         pump_task = asyncio.create_task(pump())
@@ -57,6 +61,10 @@ class CancelOnDisconnectMiddleware:
             done, _ = await asyncio.wait({app_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
             if app_task in done:
                 app_task.result()
+                return
+
+            if completed:
+                await app_task
                 return
 
             app_task.cancel()
