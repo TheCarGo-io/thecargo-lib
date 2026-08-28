@@ -41,6 +41,10 @@ RESOURCES: Final[tuple[str, ...]] = (
     "target",
     "lead_parsing",
     "order_feedback",
+    "payment",
+    "refund",
+    "commission",
+    "payroll",
     "payment_method",
     "credit_card",
     "conversation",
@@ -144,6 +148,10 @@ GROUPS: Final[list[dict]] = [
     {
         "title": "BILLING",
         "resources": [
+            {"key": "payment", "label": "Payments"},
+            {"key": "refund", "label": "Refunds"},
+            {"key": "commission", "label": "Commission"},
+            {"key": "payroll", "label": "Payroll Runs"},
             {"key": "payment_method", "label": "Payment Methods"},
             {"key": "credit_card", "label": "Credit Cards"},
         ],
