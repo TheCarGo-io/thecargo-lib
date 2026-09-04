@@ -156,6 +156,13 @@ def _significant(obj: "Auditable", changed: list[str] | None) -> list[str]:
     return sorted(set(changed) & obj.__audit_significant__)
 
 
+def _lifecycle_state(obj: "Auditable") -> Any | None:
+    field = obj.__audit_lifecycle_field__
+    if not field:
+        return None
+    return _jsonify(getattr(obj, field, None))
+
+
 def _lifecycle(obj: "Auditable", old: dict | None, new: dict | None, changed: list[str] | None) -> dict | None:
     field = obj.__audit_lifecycle_field__
     if not field or not changed or field not in changed:
@@ -254,6 +261,7 @@ def _build_payload(
         "action": action,
         "changed_fields": changed,
         "significant_fields": _significant(obj, changed),
+        "lifecycle_state": _lifecycle_state(obj),
         "lifecycle_transition": _lifecycle(obj, old_data, new_data, changed),
         "old_data": old_data,
         "new_data": new_data,
