@@ -14,6 +14,9 @@ class ShipmentClient(ServiceClient):
     async def customer(self, customer_id: UUID) -> dict:
         return await self.get(f"/api/internal/customers/{customer_id}")
 
+    async def shipment_owner(self, shipment_id: UUID) -> dict:
+        return await self.get(f"/api/internal/shipments/{shipment_id}/owner")
+
     async def customers_by_email(self, organization_id: UUID, email: str, limit: int = 200) -> list[dict]:
         data = await self.get(
             "/api/internal/customers",
