@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-VERSION = 3
+VERSION = 4
 
 
 class VarType(str, Enum):
@@ -19,6 +19,7 @@ class FieldDef:
     sample: object | None = None
     formatter: str | None = None
     description: str | None = None
+    hidden: bool = False
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class Variable:
     formatter: str | None = None
     description: str | None = None
     insert: str | None = None
+    hidden: bool = False
 
 
 # ── Object schemas ───────────────────────────────────────────────────
@@ -56,7 +58,7 @@ CUSTOMER_SCHEMA = ObjectSchema(
         FieldDef("phone", "Phone", "(555) 123-4567", formatter="phone"),
         FieldDef("alt_phone", "Alt. phone", "(555) 555-7788", formatter="phone"),
         FieldDef("company", "Company", "Mitchell Logistics LLC"),
-        FieldDef("type", "Type", "business"),
+        FieldDef("type", "Customer type", "business"),
         FieldDef("address", "Billing address", "123 Main St"),
         FieldDef("city", "Billing city", "Houston"),
         FieldDef("state", "Billing state", "TX"),
@@ -106,7 +108,7 @@ STOP_SCHEMA = ObjectSchema(
     name="Stop",
     label="Stop",
     fields=(
-        FieldDef("type", "Type", "pickup"),
+        FieldDef("type", "Type", "pickup", hidden=True),
         FieldDef("city", "City", "Houston"),
         FieldDef("state", "State", "TX"),
         FieldDef("zip", "ZIP", "77006"),
@@ -114,7 +116,7 @@ STOP_SCHEMA = ObjectSchema(
         FieldDef("business_name", "Business name", "Houston Auto Auction"),
         FieldDef("contact_name", "Contact name", "Mike Reed"),
         FieldDef("contact_phone", "Contact phone", "(832) 555-1212", formatter="phone"),
-        FieldDef("scheduled_at", "Scheduled at", "2026-04-26T08:00:00", formatter="datetime_short"),
+        FieldDef("scheduled_at", "Scheduled at", "2026-04-26T08:00:00", formatter="datetime_short", hidden=True),
     ),
 )
 
@@ -139,7 +141,7 @@ SHIPMENT_SCHEMA = ObjectSchema(
     label="Shipment",
     fields=(
         FieldDef("code", "Code", "ORD-1234"),
-        FieldDef("stage", "Stage", "order"),
+        FieldDef("stage", "Stage", "order", hidden=True),
         FieldDef("status", "Status", "dispatched", formatter="status_label"),
         FieldDef("transport_type", "Transport type", "open"),
         FieldDef("instructions", "Instructions", "Call before arrival"),
@@ -230,9 +232,30 @@ SCHEMAS: dict[str, ObjectSchema] = {
 
 # ── Top-level variable registry ──────────────────────────────────────
 
+SHIPMENT_DATE_FIELDS = frozenset(
+    {
+        "first_available_date",
+        "estimated_pickup_at",
+        "estimated_delivery_at",
+        "created_at",
+    }
+)
 
-def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = None) -> tuple[Variable, ...]:
+
+def _expand(
+    prefix: str,
+    schema_name: str,
+    group: str,
+    subgroup: str | None = None,
+    *,
+    only: frozenset[str] | None = None,
+    exclude: frozenset[str] = frozenset(),
+) -> tuple[Variable, ...]:
     schema = SCHEMAS[schema_name]
+    keys = {f.key for f in schema.fields}
+    unknown = ((only or frozenset()) | exclude) - keys
+    if unknown:
+        raise KeyError(f"{schema_name} has no field(s) {sorted(unknown)}")
     return tuple(
         Variable(
             path=f"{prefix}.{f.key}",
@@ -242,8 +265,10 @@ def _expand(prefix: str, schema_name: str, group: str, subgroup: str | None = No
             sample=f.sample,
             formatter=f.formatter,
             description=f.description,
+            hidden=f.hidden,
         )
         for f in schema.fields
+        if (only is None or f.key in only) and f.key not in exclude
     )
 
 
@@ -269,6 +294,7 @@ def _expand_delivery_stop(group: str, subgroup: str | None) -> tuple[Variable, .
             sample=samples.get(f.key, f.sample),
             formatter=f.formatter,
             description=f.description,
+            hidden=f.hidden,
         )
         for f in schema.fields
     )
@@ -330,9 +356,16 @@ REGISTRY: tuple[Variable, ...] = (
         subgroup="Vehicle details",
         sample="1HG...",
     ),
-    *_expand("shipment", "Shipment", group="Shipping details", subgroup="Shipping info"),
+    *_expand(
+        "shipment",
+        "Shipment",
+        group="Shipping details",
+        subgroup="Shipping info",
+        exclude=SHIPMENT_DATE_FIELDS,
+    ),
     *_expand("pickup", "Stop", group="Shipping details", subgroup="Origin information"),
     *_expand_delivery_stop(group="Shipping details", subgroup="Destination information"),
+    *_expand("shipment", "Shipment", group="Dates", subgroup="Shipment dates", only=SHIPMENT_DATE_FIELDS),
     *_expand("pricing", "Pricing", group="Price info", subgroup="Price information"),
     *_expand("payment", "Payment", group="Price info", subgroup="Payment details"),
     Variable(
@@ -350,20 +383,22 @@ REGISTRY: tuple[Variable, ...] = (
         description="Public shipment tracking page URL.",
     ),
     *_expand("carrier", "Carrier", group="Carrier", subgroup="Carrier info"),
-    *_expand("company", "Company", group="Company / User information", subgroup="Company information"),
-    *_expand("agent", "Agent", group="Company / User information", subgroup="User information"),
-    *_expand("org", "Org", group="Company / User information", subgroup="Company (legacy)"),
+    *_expand("company", "Company", group="Company information"),
+    *_expand("agent", "Agent", group="User information"),
+    *_expand("org", "Org", group="Company information", subgroup="Company (legacy)"),
     Variable(
         path="current_date",
         label="Today's date",
-        group="Date & Time",
+        group="Dates",
+        subgroup="Today",
         sample="Apr 25, 2026",
         formatter="date_short",
     ),
     Variable(
         path="current_year",
         label="Current year",
-        group="Date & Time",
+        group="Dates",
+        subgroup="Today",
         sample=2026,
     ),
 )
@@ -375,6 +410,8 @@ REGISTRY: tuple[Variable, ...] = (
 def registry_tree() -> dict:
     groups: dict[str, dict] = {}
     for v in REGISTRY:
+        if v.hidden:
+            continue
         g = groups.setdefault(v.group, {"label": v.group, "subgroups": {}, "items": []})
         if v.subgroup:
             sg = g["subgroups"].setdefault(v.subgroup, {"label": v.subgroup, "items": []})
