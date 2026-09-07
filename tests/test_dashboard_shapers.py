@@ -7,6 +7,7 @@ plus the team leaderboard logic and scope/name handling.
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from thecargo.dashboard import Period, resolve_period, shape_queue, shape_team
 from thecargo.dashboard.shapers import _fill_daily_gaps, _fmt_money
@@ -52,7 +53,7 @@ def test_fill_daily_gaps_coerces_decimal_to_int():
 
 def test_shape_team_survives_decimal_metrics():
     # The exact failure mode that 500'd: every metric arrives as Decimal.
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     users = [
         {
             "user_id": "u1",
@@ -70,7 +71,7 @@ def test_shape_team_survives_decimal_metrics():
 
 
 def test_leaderboard_top_improved_coaching():
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     users = [
         _agent("top", orders=10, dispatched=6, rev=900000, prior_rev=600000),  # highest rev, +50%
         _agent("improved", orders=10, dispatched=3, rev=300000, prior_rev=50000),  # +500%
@@ -90,7 +91,7 @@ def test_leaderboard_top_improved_coaching():
 
 
 def test_leaderboard_skips_zero_prior_for_delta():
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     users = [_agent("only", orders=5, dispatched=5, rev=500000, prior_rev=0)]
     resp = shape_team(_wrap(users), resolved)
     assert resp.leaderboard.top_performer.user_id == "only"  # ranks on current rev
@@ -100,7 +101,7 @@ def test_leaderboard_skips_zero_prior_for_delta():
 
 def test_team_avg_rate_ignores_orderless_agents():
     # An agent with 0 orders must not drag the team-average dispatch rate to 0.
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     users = [
         _agent("a", orders=10, dispatched=8, rev=100, prior_rev=0),  # 80%
         _agent("b", orders=0, dispatched=0, rev=0, prior_rev=0),  # no orders → excluded from rate avg
@@ -113,7 +114,7 @@ def test_team_avg_rate_ignores_orderless_agents():
 
 
 def test_empty_team():
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     resp = shape_team(_wrap([]), resolved)
     assert resp.team_size == 0
     assert resp.team == []
@@ -122,7 +123,7 @@ def test_empty_team():
 
 
 def test_names_null_when_unresolved_and_populated_when_given():
-    resolved = resolve_period(Period.LAST_7D)
+    resolved = resolve_period(Period.LAST_7D, ZoneInfo("America/New_York"))
     users = [_agent("u1", orders=1, dispatched=1, rev=100, prior_rev=0)]
     assert shape_team(_wrap(users), resolved).team[0].name is None
     named = shape_team(

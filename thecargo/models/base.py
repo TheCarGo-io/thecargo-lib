@@ -42,25 +42,32 @@ class FieldTooLongError(ValueError):
         super().__init__(f"{table}.{column} exceeds {max_length} characters (got {actual_length})")
 
 
-def _enforce_string_lengths(mapper, connection, target) -> None:
+class NaiveDatetimeError(ValueError):
+    def __init__(self, table: str, column: str) -> None:
+        self.table = table
+        self.column = column
+        super().__init__(f"{table}.{column} was given a naive datetime; every stored instant must carry a timezone")
+
+
+def _enforce_column_contracts(mapper, connection, target) -> None:
     for col in mapper.columns:
         col_type = col.type
-        if not isinstance(col_type, String):
-            continue
-        max_length = col_type.length
-        if max_length is None:
-            continue
         value = getattr(target, col.key, None)
-        if not isinstance(value, str):
-            continue
-        if len(value) > max_length:
-            raise FieldTooLongError(
-                table=target.__tablename__,
-                column=col.key,
-                max_length=max_length,
-                actual_length=len(value),
-            )
+        if isinstance(col_type, String):
+            max_length = col_type.length
+            if max_length is None or not isinstance(value, str):
+                continue
+            if len(value) > max_length:
+                raise FieldTooLongError(
+                    table=target.__tablename__,
+                    column=col.key,
+                    max_length=max_length,
+                    actual_length=len(value),
+                )
+        elif isinstance(col_type, DateTime) and col_type.timezone:
+            if isinstance(value, datetime) and value.tzinfo is None:
+                raise NaiveDatetimeError(table=target.__tablename__, column=col.key)
 
 
-event.listen(Base, "before_insert", _enforce_string_lengths, propagate=True)
-event.listen(Base, "before_update", _enforce_string_lengths, propagate=True)
+event.listen(Base, "before_insert", _enforce_column_contracts, propagate=True)
+event.listen(Base, "before_update", _enforce_column_contracts, propagate=True)

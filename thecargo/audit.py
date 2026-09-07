@@ -14,7 +14,7 @@ from sqlalchemy.orm.base import NO_VALUE
 
 from thecargo.context import get_audit_context
 from thecargo.events import publisher
-from thecargo.utils.timezone import now_ny
+from thecargo.utils.timezone import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ def _build_payload(
         "request_id": str(ctx.request_id) if ctx.request_id is not None else None,
         "ip_address": ctx.ip_address,
         "user_agent": (ctx.user_agent[:500] if ctx.user_agent else None),
-        "created_at": now_ny().isoformat(),
+        "created_at": utc_now().isoformat(),
     }
     pending = _pending_refs(obj, action, changed)
     if pending:
@@ -312,7 +312,7 @@ async def emit_audit_event(
         "request_id": str(ctx.request_id) if ctx.request_id is not None else None,
         "ip_address": ctx.ip_address,
         "user_agent": (ctx.user_agent[:500] if ctx.user_agent else None),
-        "created_at": now_ny().isoformat(),
+        "created_at": utc_now().isoformat(),
     }
     await _publish_one(payload)
 

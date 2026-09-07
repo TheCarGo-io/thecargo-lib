@@ -5,7 +5,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from thecargo.models.base import SoftDeleteModel
-from thecargo.utils.timezone import now_ny
+from thecargo.utils.timezone import utc_now
 
 T = TypeVar("T")
 
@@ -72,7 +72,7 @@ class TenantRepository:
 
     async def delete(self, obj):
         if self.soft_delete and isinstance(obj, SoftDeleteModel):
-            obj.deleted_at = now_ny()
+            obj.deleted_at = utc_now()
             await self.db.flush()
         else:
             await self.db.delete(obj)
