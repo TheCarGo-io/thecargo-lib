@@ -3,7 +3,6 @@ from __future__ import annotations
 import calendar as _cal
 import html
 from datetime import date, datetime, timedelta, timezone, tzinfo
-from zoneinfo import ZoneInfo
 
 from thecargo.dashboard.period import ResolvedPeriod
 from thecargo.dashboard.schemas import (
@@ -39,7 +38,6 @@ from thecargo.dashboard.schemas import (
     TeamMember,
     WaitingOnCustomerPanel,
 )
-
 
 
 def greeting_for(now: datetime) -> str:
