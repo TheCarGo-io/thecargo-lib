@@ -26,6 +26,12 @@ class TokenPayload:
     # stale token can be rejected with 401 token_stale.
     role_version: int = 0
     session_id: str | None = None
+    # Effective IANA timezone at mint time: user.timezone or the organization's.
+    # None only on tokens minted before the timezone claim existed.
+    tz: str | None = None
+    # The organization's own IANA timezone — team-shared windows (a "today" tab,
+    # a lead release day) cut on this one even when the viewer set a personal tz.
+    otz: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,8 @@ async def get_current_user(
         stage_filters=_decode_stage_filters(payload.get("ps", {})),
         role_version=payload.get("rv", 0),
         session_id=payload.get("sid"),
+        tz=payload.get("tz"),
+        otz=payload.get("otz"),
     )
 
     await _enforce_token_state(user, payload.get("iat"))

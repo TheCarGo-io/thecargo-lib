@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, tzinfo
 from typing import Any
 from uuid import UUID
 
@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from thecargo.exceptions import BadRequestException
 from thecargo.models.base import SoftDeleteModel
-from thecargo.utils.timezone import now_ny
+from thecargo.utils.timezone import UTC, range_bounds_utc, utc_now
 
 
 class AdminRepository:
@@ -71,8 +71,11 @@ class AdminRepository:
 
     date_field: str | None = "created_at"
 
-    def _apply_window(self, query: Select, date_from: date | None, date_to: date | None) -> Select:
-
+    def _apply_window(self, query: Select, date_from: date | None, date_to: date | None, tz: tzinfo = UTC) -> Select:
+        """Inclusive day window as explicit instants — a bare ``date`` compared
+        against timestamptz would otherwise be cast by whatever TimeZone the
+        session happens to run under. Platform-wide admin listings cut on UTC
+        days; pass the tenant's zone when the listing is scoped to one."""
         if self.date_field is None or not hasattr(self.model, self.date_field):
             raise TypeError(
                 f"{type(self).__name__} has no date column to window on "
@@ -80,10 +83,11 @@ class AdminRepository:
             )
 
         column = getattr(self.model, self.date_field)
-        if date_from is not None:
-            query = query.where(column >= date_from)
-        if date_to is not None:
-            query = query.where(column < date_to + timedelta(days=1))
+        lower, upper = range_bounds_utc(date_from, date_to, tz)
+        if lower is not None:
+            query = query.where(column >= lower)
+        if upper is not None:
+            query = query.where(column < upper)
         return query
 
     def build_list_query(
@@ -95,6 +99,7 @@ class AdminRepository:
         include_deleted: bool = False,
         date_from: date | None = None,
         date_to: date | None = None,
+        window_tz: tzinfo = UTC,
         **filters: Any,
     ) -> Select:
 
@@ -104,7 +109,7 @@ class AdminRepository:
             query = query.where(self.model.organization_id == organization_id)
 
         if date_from is not None or date_to is not None:
-            query = self._apply_window(query, date_from, date_to)
+            query = self._apply_window(query, date_from, date_to, window_tz)
 
         for field, value in filters.items():
             if value is not None:
@@ -141,7 +146,7 @@ class AdminRepository:
 
     async def delete(self, obj) -> None:
         if isinstance(obj, SoftDeleteModel):
-            obj.deleted_at = now_ny()
+            obj.deleted_at = utc_now()
         else:
             await self.db.delete(obj)
         await self.db.flush()

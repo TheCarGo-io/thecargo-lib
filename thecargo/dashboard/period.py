@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from enum import Enum
-from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-
-ORG_TZ = ZoneInfo("America/New_York")
 
 
 class Period(str, Enum):
@@ -37,8 +34,8 @@ class ResolvedPeriod:
     label: str
 
 
-def _today_in_org_tz() -> date:
-    return datetime.now(ORG_TZ).date()
+def _today_in(tz: tzinfo) -> date:
+    return datetime.now(tz).date()
 
 
 def _format_label(period: Period, w: DateWindow) -> str:
@@ -67,8 +64,10 @@ def _quarter_start(d: date) -> date:
     return date(d.year, (d.month - 1) // 3 * 3 + 1, 1)
 
 
-def resolve_period(period: Period, date_from: date | None = None, date_to: date | None = None) -> ResolvedPeriod:
-    today = _today_in_org_tz()
+def resolve_period(
+    period: Period, tz: tzinfo, date_from: date | None = None, date_to: date | None = None
+) -> ResolvedPeriod:
+    today = _today_in(tz)
     if period == Period.TODAY:
         current = DateWindow(today, today)
         prior = DateWindow(today - timedelta(days=1), today - timedelta(days=1))

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import calendar as _cal
 import html
-from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 
 from thecargo.dashboard.period import ResolvedPeriod
 from thecargo.dashboard.schemas import (
@@ -39,8 +38,6 @@ from thecargo.dashboard.schemas import (
     TeamMember,
     WaitingOnCustomerPanel,
 )
-
-ORG_TZ = ZoneInfo("America/New_York")
 
 
 def greeting_for(now: datetime) -> str:
@@ -656,14 +653,14 @@ def _parse_iso_time(value: str | None):
         return None
 
 
-def _task_at(task: dict) -> datetime | None:
+def _task_at(task: dict, tz: tzinfo) -> datetime | None:
     d = _parse_iso_date(task.get("date"))
     if d is None:
         return None
     t = _parse_iso_time(task.get("start_time"))
     if t is None:
         return None
-    local = datetime.combine(d, t).replace(tzinfo=ORG_TZ)
+    local = datetime.combine(d, t).replace(tzinfo=tz)
     return local.astimezone(timezone.utc)
 
 
@@ -695,7 +692,7 @@ def _stop_row(stop: dict) -> CalendarListItem:
     )
 
 
-def _task_row(task: dict) -> CalendarListItem:
+def _task_row(task: dict, tz: tzinfo) -> CalendarListItem:
     raw_type = (task.get("type") or "general").lower()
     task_type = raw_type if raw_type in _TASK_PILL_TEXT else "general"
     tag = _TASK_PILL_TEXT[task_type]
@@ -729,7 +726,7 @@ def _task_row(task: dict) -> CalendarListItem:
             meta_bits.append(task["customer_name"])
         meta = " · ".join(meta_bits)
     return CalendarListItem(
-        at=_task_at(task),
+        at=_task_at(task, tz),
         text=text,
         meta=meta,
         tag=tag,
@@ -757,15 +754,15 @@ def _follow_up_summary_row(summary: dict) -> CalendarListItem:
     )
 
 
-def shape_calendar(raw: dict) -> DashboardCalendarResponse:
-    today_label = datetime.now(ORG_TZ).strftime("%b %-d")
+def shape_calendar(raw: dict, tz: tzinfo) -> DashboardCalendarResponse:
+    today_label = datetime.now(tz).strftime("%b %-d")
     if raw.get("date_label"):
         today_label = str(raw["date_label"])
     timed_items: list[CalendarListItem] = []
     for stop in raw.get("stops") or []:
         timed_items.append(_stop_row(stop))
     for task in raw.get("tasks") or []:
-        timed_items.append(_task_row(task))
+        timed_items.append(_task_row(task, tz))
     timed_items.sort(key=lambda i: i.at or datetime.max.replace(tzinfo=timezone.utc))
     items: list[CalendarListItem] = list(timed_items)
     summary = raw.get("follow_up_summary")

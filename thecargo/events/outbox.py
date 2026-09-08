@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from thecargo.events import publisher
 from thecargo.models.base import BaseModel
-from thecargo.utils.timezone import now_ny
+from thecargo.utils.timezone import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def _mark_published(session_factory, event_id) -> None:
         await session.execute(
             update(OutboxEvent)
             .where(OutboxEvent.id == event_id)
-            .values(status="published", published_at=now_ny(), attempts=OutboxEvent.attempts + 1)
+            .values(status="published", published_at=utc_now(), attempts=OutboxEvent.attempts + 1)
         )
         await session.commit()
 
@@ -126,7 +126,7 @@ def register_outbox_listeners(session_class, session_factory) -> None:
 async def relay_once(session_factory) -> int:
     if not _publisher_ready():
         return 0
-    cutoff = now_ny() - timedelta(seconds=RELAY_GRACE_SECONDS)
+    cutoff = utc_now() - timedelta(seconds=RELAY_GRACE_SECONDS)
     async with session_factory() as session:
         rows = (
             (
@@ -156,7 +156,7 @@ async def relay_once(session_factory) -> int:
                 row.last_error = str(exc)[:500]
                 continue
             row.status = "published"
-            row.published_at = now_ny()
+            row.published_at = utc_now()
             row.attempts += 1
             published += 1
         await session.commit()
@@ -164,7 +164,7 @@ async def relay_once(session_factory) -> int:
 
 
 async def cleanup_published(session_factory, older_than_days: int = CLEANUP_RETENTION_DAYS) -> int:
-    cutoff = now_ny() - timedelta(days=older_than_days)
+    cutoff = utc_now() - timedelta(days=older_than_days)
     async with session_factory() as session:
         result = await session.execute(
             delete(OutboxEvent).where(OutboxEvent.status == "published", OutboxEvent.published_at < cutoff)
