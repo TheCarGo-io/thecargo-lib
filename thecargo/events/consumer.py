@@ -15,6 +15,7 @@ async def start_consumer(
     handler: Callable[[str, dict[str, Any]], Any],
     exchange: str = "thecargo.events",
     requeue_failed: bool = False,
+    prefetch_count: int = 10,
 ):
     """Consume an exchange's events, acknowledging each one the handler survives.
 
@@ -26,7 +27,7 @@ async def start_consumer(
     """
     connection = await aio_pika.connect_robust(rabbitmq_url)
     channel = await connection.channel()
-    await channel.set_qos(prefetch_count=10)
+    await channel.set_qos(prefetch_count=prefetch_count)
 
     ex = await channel.declare_exchange(exchange, aio_pika.ExchangeType.TOPIC, durable=True)
     queue = await channel.declare_queue(queue_name, durable=True)
