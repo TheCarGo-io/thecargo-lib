@@ -28,6 +28,7 @@ already gone out.
 RELAY_GRACE_SECONDS = 30
 RELAY_BATCH = 200
 RELAY_MAX_ATTEMPTS = 10
+RECLAIM_AFTER_SECONDS = 300
 RELAY_INTERVAL_SECONDS = 5.0
 CLEANUP_RETENTION_DAYS = 7
 CLEANUP_EVERY_TICKS = 720
@@ -124,43 +125,79 @@ def register_outbox_listeners(session_class, session_factory) -> None:
 
 
 async def relay_once(session_factory) -> int:
+    """Publish due pending rows, keeping the broker round-trips out of any transaction.
+
+    The claim transaction flips a batch to ``publishing`` and commits before the
+    first RabbitMQ call, so a pooled connection is never held across broker I/O
+    — the old single-transaction version pinned a connection (and 200 row locks)
+    for the whole publish loop, which is exactly the pool-exhaustion shape this
+    relay exists to prevent. Delivery stays at-least-once: a crash between claim
+    and stamp leaves ``publishing`` rows for ``_reclaim_stuck`` to return to
+    pending, and consumers already drop replays by ``event_id``.
+    """
     if not _publisher_ready():
         return 0
+    await _reclaim_stuck(session_factory)
     cutoff = utc_now() - timedelta(seconds=RELAY_GRACE_SECONDS)
     async with session_factory() as session:
         rows = (
-            (
-                await session.execute(
-                    select(OutboxEvent)
-                    .where(
-                        OutboxEvent.status == "pending",
-                        OutboxEvent.created_at < cutoff,
-                        OutboxEvent.attempts < RELAY_MAX_ATTEMPTS,
-                    )
-                    .order_by(OutboxEvent.created_at)
-                    .limit(RELAY_BATCH)
-                    .with_for_update(skip_locked=True)
+            await session.execute(
+                select(OutboxEvent.id, OutboxEvent.routing_key, OutboxEvent.payload)
+                .where(
+                    OutboxEvent.status == "pending",
+                    OutboxEvent.created_at < cutoff,
+                    OutboxEvent.attempts < RELAY_MAX_ATTEMPTS,
                 )
+                .order_by(OutboxEvent.created_at)
+                .limit(RELAY_BATCH)
+                .with_for_update(skip_locked=True)
             )
-            .scalars()
-            .all()
-        )
+        ).all()
         if not rows:
             return 0
-        published = 0
-        for row in rows:
-            try:
-                await _deliver(row.routing_key, row.payload, row.id)
-            except Exception as exc:
-                row.attempts += 1
-                row.last_error = str(exc)[:500]
-                continue
-            row.status = "published"
-            row.published_at = utc_now()
-            row.attempts += 1
-            published += 1
+        await session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.id.in_([row.id for row in rows]))
+            .values(status="publishing", attempts=OutboxEvent.attempts + 1)
+        )
         await session.commit()
-        return published
+
+    published: list = []
+    failed: list[tuple[object, str]] = []
+    for row in rows:
+        try:
+            await _deliver(row.routing_key, row.payload, row.id)
+        except Exception as exc:
+            failed.append((row.id, str(exc)[:500]))
+            continue
+        published.append(row.id)
+
+    async with session_factory() as session:
+        if published:
+            await session.execute(
+                update(OutboxEvent)
+                .where(OutboxEvent.id.in_(published))
+                .values(status="published", published_at=utc_now())
+            )
+        for event_id, error in failed:
+            await session.execute(
+                update(OutboxEvent).where(OutboxEvent.id == event_id).values(status="pending", last_error=error)
+            )
+        await session.commit()
+    return len(published)
+
+
+async def _reclaim_stuck(session_factory) -> None:
+    cutoff = utc_now() - timedelta(seconds=RECLAIM_AFTER_SECONDS)
+    async with session_factory() as session:
+        result = await session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.status == "publishing", OutboxEvent.updated_at < cutoff)
+            .values(status="pending")
+        )
+        await session.commit()
+    if result.rowcount:
+        logger.warning("outbox reclaimed %d rows stuck in publishing", result.rowcount)
 
 
 async def cleanup_published(session_factory, older_than_days: int = CLEANUP_RETENTION_DAYS) -> int:
