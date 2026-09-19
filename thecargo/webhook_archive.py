@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -249,42 +248,31 @@ async def restamp(
     return updated
 
 
-async def store(
-    collection: Any, doc: dict[str, Any], *, key: dict[str, Any] | None = None, refresh: Iterable[str] = ()
-) -> WebhookRow:
-    """Mongo keeps its copy until the archive finishes moving; ClickHouse gets every delivery."""
-    on_insert = dict(doc)
-    always = {name: on_insert.pop(name) for name in refresh if name in on_insert}
-    update: dict[str, Any] = {"$setOnInsert": on_insert}
-    if always:
-        update["$set"] = always
-    await collection.update_one(key or {"source": doc["source"], "event_id": doc["event_id"]}, update, upsert=True)
+async def store(doc: dict[str, Any]) -> WebhookRow:
     row = WebhookRow.from_document(doc)
     await insert(row)
     return row
 
 
 async def stamp(
-    collection: Any,
-    key: dict[str, Any],
-    changes: dict[str, Any],
-    *,
+    source: str | None,
     event_id: str,
-    source: str | None = None,
     organization_id: UUID | str | None = None,
+    *,
     row: WebhookRow | None = None,
-) -> None:
-    await collection.update_one(key, {"$set": changes})
+    **changes: Any,
+) -> WebhookRow | None:
     columns = {_COLUMN_OF.get(name, name): value for name, value in changes.items()}
-    await restamp(
+    return await restamp(
         source, event_id, organization_id, row=row, **{k: v for k, v in columns.items() if k in COLUMNS or k == "extra"}
     )
 
 
-async def purge(collection: Any, organization_id: UUID | str) -> int:
-    result = await collection.delete_many({"organization_id": str(organization_id)})
+async def purge(organization_id: UUID | str) -> int:
+    params = {"org": _uuid_or_none(organization_id)}
+    deleted = await count("WHERE organization_id = {org:UUID}", params)
     await purge_organization(organization_id)
-    return result.deleted_count
+    return deleted
 
 
 async def purge_organization(organization_id: UUID | str) -> None:
