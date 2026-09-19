@@ -10,6 +10,8 @@ from bson.codec_options import TypeEncoder, TypeRegistry
 from bson.decimal128 import Decimal128
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
+from thecargo.utils.url import redact_credentials
+
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient | None = None
@@ -70,14 +72,14 @@ async def init_mongo(
         await init_beanie(database=client[resolved_db_name], document_models=list(document_models))
     except Exception:
         client.close()
-        logger.exception("MongoDB init failed (uri=%s db=%s)", _redact(uri), resolved_db_name)
+        logger.exception("MongoDB init failed (uri=%s db=%s)", redact_credentials(uri), resolved_db_name)
         raise
 
     _client = client
     _db_name = resolved_db_name
     logger.info(
         "MongoDB connected: %s/%s (%d documents)",
-        _redact(uri),
+        redact_credentials(uri),
         resolved_db_name,
         len(document_models),
     )
@@ -100,11 +102,3 @@ def get_client() -> AsyncIOMotorClient:
 
 def get_db() -> AsyncIOMotorDatabase:
     return get_client()[_db_name]
-
-
-def _redact(uri: str) -> str:
-    if "@" not in uri:
-        return uri
-    scheme, _, rest = uri.partition("://")
-    _, _, host_part = rest.partition("@")
-    return f"{scheme}://***@{host_part}"
