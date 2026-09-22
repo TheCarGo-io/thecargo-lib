@@ -16,6 +16,7 @@ async def start_consumer(
     exchange: str = "thecargo.events",
     requeue_failed: bool = False,
     prefetch_count: int = 10,
+    arguments: dict[str, Any] | None = None,
 ):
     """Consume an exchange's events, acknowledging each one the handler survives.
 
@@ -24,13 +25,18 @@ async def start_consumer(
     raises sends the message back once, and a second failure drops it, so a
     message the handler can never process cannot spin forever. Leave it off for
     handlers whose work is not safe to repeat.
+
+    `arguments` are passed to the queue declaration (`x-message-ttl`,
+    `x-max-length`, ...) for queues whose messages go stale fast; a queue that
+    already exists with different arguments is refused by the broker, so pick
+    them when the queue is born.
     """
     connection = await aio_pika.connect_robust(rabbitmq_url)
     channel = await connection.channel()
     await channel.set_qos(prefetch_count=prefetch_count)
 
     ex = await channel.declare_exchange(exchange, aio_pika.ExchangeType.TOPIC, durable=True)
-    queue = await channel.declare_queue(queue_name, durable=True)
+    queue = await channel.declare_queue(queue_name, durable=True, arguments=arguments)
 
     for key in routing_keys:
         await queue.bind(ex, routing_key=key)
