@@ -1,6 +1,7 @@
 import json
 
 import pytest
+
 from thecargo.events import consumer as consumer_module
 
 
@@ -44,7 +45,7 @@ class FakeChannel:
     async def declare_exchange(self, name, kind, durable):
         return object()
 
-    async def declare_queue(self, name, durable):
+    async def declare_queue(self, name, durable, arguments=None):
         return self.queue
 
 
