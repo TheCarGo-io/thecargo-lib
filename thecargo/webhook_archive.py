@@ -211,13 +211,19 @@ async def fetch(source: str | None, event_id: str, organization_id: UUID | str |
     if organization_id is not None:
         where += " AND organization_id = {org:UUID}"
         params["org"] = _uuid_or_none(organization_id)
-    rows = await query(f"WHERE {where} ORDER BY version DESC LIMIT 1", params)
+    rows = await query(f"WHERE {where} ORDER BY version DESC LIMIT 1", params, final=False)
     return rows[0] if rows else None
 
 
-async def query(clause: str, params: dict[str, Any] | None = None) -> list[WebhookRow]:
+async def query(clause: str, params: dict[str, Any] | None = None, *, final: bool = True) -> list[WebhookRow]:
+    """``final=False`` suits a lookup that picks the newest version itself (``ORDER BY version DESC LIMIT 1``).
+
+    FINAL merges every part the key range touches before filtering; ``event_id`` is not in the sorting key, so
+    a point lookup under FINAL reads the whole table and runs out of memory once it holds a few million rows.
+    """
     client = await get_client()
-    result = await client.query(f"SELECT {SELECT_COLUMNS} FROM {TABLE} FINAL {clause}", parameters=params)
+    modifier = " FINAL" if final else ""
+    result = await client.query(f"SELECT {SELECT_COLUMNS} FROM {TABLE}{modifier} {clause}", parameters=params)
     return [WebhookRow.from_values(values) for values in result.result_rows]
 
 
