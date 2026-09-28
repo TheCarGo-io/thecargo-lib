@@ -1,6 +1,6 @@
 from typing import Final
 
-from thecargo.permissions import ACTIONS, RESOURCES
+from thecargo.permissions import ACTIONS, PHONE_ONLY_RESOURCES, PHONE_ORG_TYPE, PHONE_RESOURCES, RESOURCES
 
 # The per-tab toolbar resources that grant the same set of CRUD actions together.
 # `toolbar_activity` is intentionally excluded — it is view-only and granted on its own.
@@ -14,9 +14,12 @@ _TOOLBAR_SECTIONS: Final[tuple[str, ...]] = (
     "toolbar_payment",
 )
 
-SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in RESOURCES for a in ACTIONS}
+SUPERUSER: Final[dict[str, str]] = {
+    f"{r}.{a}": "all" for r in RESOURCES if r not in PHONE_ONLY_RESOURCES for a in ACTIONS
+}
 
 MANAGER: Final[dict[str, str]] = {
+    "analytics.view": "all",
     **{
         f"{r}.view": "all"
         for r in (
@@ -63,6 +66,7 @@ MANAGER: Final[dict[str, str]] = {
 }
 
 SALES_AGENT: Final[dict[str, str]] = {
+    "analytics.view": "all",
     # Sales works leads and quotes; visibility into orders is read-only.
     **{f"{r}.view": "own" for r in ("lead", "quote", "order", "customer", "task", "contract", "order_feedback")},
     **{f"{r}.create": "all" for r in ("lead", "quote", "customer", "task")},
@@ -87,6 +91,7 @@ SALES_AGENT: Final[dict[str, str]] = {
 }
 
 DISPATCHER: Final[dict[str, str]] = {
+    "analytics.view": "all",
     # Operations role that moves booked orders: dispatching, carriers and loadboard.
     "shipment.view": "all",
     **{f"{r}.view": "all" for r in ("lead", "quote")},
@@ -123,6 +128,7 @@ DISPATCHER: Final[dict[str, str]] = {
 }
 
 ACCOUNTANT: Final[dict[str, str]] = {
+    "analytics.view": "all",
     # Billing role: full control over payment instruments, read-only on shipments.
     **{f"payment_method.{a}": "all" for a in ACTIONS},
     **{f"credit_card.{a}": "all" for a in ACTIONS},
@@ -140,6 +146,7 @@ ACCOUNTANT: Final[dict[str, str]] = {
 }
 
 SUPPORT_AGENT: Final[dict[str, str]] = {
+    "analytics.view": "all",
     # Customer-support role: lives in conversations and templates, read-only on data.
     **{f"conversation.{a}": "all" for a in ("view", "create", "update")},
     "notification.view": "all",
@@ -168,6 +175,69 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
     "Accountant": ACCOUNTANT,
     "Support Agent": SUPPORT_AGENT,
 }
+
+PHONE_OWNER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in PHONE_RESOURCES for a in ACTIONS}
+
+PHONE_ADMIN: Final[dict[str, str]] = {
+    **{
+        f"{r}.{a}": "all"
+        for r in (
+            "conversation",
+            "contact",
+            "template",
+            "campaign",
+            "power_dialer",
+            "phone_number",
+            "sip_credential",
+            "tag",
+            "user",
+            "team",
+        )
+        for a in ACTIONS
+    },
+    **{
+        f"{r}.view": "all"
+        for r in ("telephony", "notification", "role", "audit", "analytics", "wallet", "subscription")
+    },
+    "telephony.update": "all",
+    "company_info.view": "all",
+    "company_info.update": "all",
+}
+
+PHONE_AGENT: Final[dict[str, str]] = {
+    "telephony.view": "all",
+    "telephony.update": "all",
+    "conversation.view": "own",
+    "conversation.create": "all",
+    "conversation.update": "own",
+    "contact.view": "all",
+    "contact.create": "all",
+    "contact.update": "own",
+    "power_dialer.view": "own",
+    "power_dialer.create": "all",
+    "power_dialer.update": "own",
+    "phone_number.view": "all",
+    "template.view": "all",
+    "tag.view": "all",
+    "tag.create": "all",
+    "notification.view": "own",
+    "analytics.view": "own",
+    "team.view": "all",
+    "company_info.view": "all",
+}
+
+PHONE_OWNER_ROLE_NAME: Final[str] = "Owner"
+PHONE_ADMIN_ROLE_NAME: Final[str] = "Admin"
+
+PHONE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
+    PHONE_OWNER_ROLE_NAME: PHONE_OWNER,
+    PHONE_ADMIN_ROLE_NAME: PHONE_ADMIN,
+    "Agent": PHONE_AGENT,
+}
+
+
+def templates_for(org_type: str | None) -> dict[str, dict[str, str]]:
+    return PHONE_TEMPLATES if org_type == PHONE_ORG_TYPE else TEMPLATES
 
 
 def expand_template(template: dict[str, str]) -> dict[str, dict[str, str | None]]:

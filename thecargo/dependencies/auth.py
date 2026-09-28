@@ -7,6 +7,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 security = HTTPBearer()
 
+DEFAULT_ORG_TYPE = "broker"
+
 SCOPE_MAP = {"a": "all", "o": "own", "t": "team", "_": None}
 ACTIONS = ["view", "create", "update", "delete"]
 
@@ -32,6 +34,7 @@ class TokenPayload:
     # The organization's own IANA timezone — team-shared windows (a "today" tab,
     # a lead release day) cut on this one even when the viewer set a personal tz.
     otz: str | None = None
+    org_type: str = DEFAULT_ORG_TYPE
 
 
 @dataclass(frozen=True)
@@ -114,11 +117,27 @@ async def get_current_user(
         session_id=payload.get("sid"),
         tz=payload.get("tz"),
         otz=payload.get("otz"),
+        org_type=payload.get("ot") or DEFAULT_ORG_TYPE,
     )
 
+    _enforce_org_type(user)
     await _enforce_token_state(user, payload.get("iat"))
 
     return user
+
+
+def _enforce_org_type(user: TokenPayload) -> None:
+    from thecargo.dependencies._settings import get_allowed_org_types
+
+    allowed = get_allowed_org_types()
+    if allowed and user.org_type not in allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "org_type_not_allowed",
+                "message": "This service is not available for your organization type",
+            },
+        )
 
 
 def role_version_key(role_id) -> str:
@@ -200,6 +219,10 @@ async def _enforce_token_state(user: "TokenPayload", issued_at) -> None:
 
 async def get_org_id(user: TokenPayload = Depends(get_current_user)) -> UUID:
     return user.org_id
+
+
+async def get_org_type(user: TokenPayload = Depends(get_current_user)) -> str:
+    return user.org_type
 
 
 class Requires:

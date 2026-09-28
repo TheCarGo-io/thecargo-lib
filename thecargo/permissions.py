@@ -68,6 +68,10 @@ RESOURCES: Final[tuple[str, ...]] = (
     "toolbar_email",
     "toolbar_payment",
     "toolbar_activity",
+    "contact",
+    "wallet",
+    "subscription",
+    "analytics",
 )
 
 RESOURCE_SET: Final[frozenset[str]] = frozenset(RESOURCES)
@@ -78,6 +82,35 @@ SCOPE_SET: Final[frozenset[str]] = frozenset(SCOPES)
 RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     "telephony": ("view",),
 }
+
+
+PHONE_ORG_TYPE: Final[str] = "phone"
+
+PHONE_ONLY_RESOURCES: Final[frozenset[str]] = frozenset({"contact", "wallet", "subscription"})
+
+PHONE_RESOURCES: Final[frozenset[str]] = PHONE_ONLY_RESOURCES | {
+    "analytics",
+    "conversation",
+    "template",
+    "campaign",
+    "notification",
+    "sip_credential",
+    "power_dialer",
+    "telephony",
+    "phone_number",
+    "tag",
+    "user",
+    "team",
+    "role",
+    "company_info",
+    "audit",
+}
+
+
+def resources_for(org_type: str | None) -> frozenset[str]:
+    if org_type == PHONE_ORG_TYPE:
+        return PHONE_RESOURCES
+    return RESOURCE_SET - PHONE_ONLY_RESOURCES
 
 
 def actions_for(resource: str) -> tuple[str, ...]:
@@ -145,6 +178,7 @@ GROUPS: Final[list[dict]] = [
             {"key": "power_dialer", "label": "Power Dialer"},
             {"key": "telephony", "label": "Telephony"},
             {"key": "phone_number", "label": "Phone Numbers"},
+            {"key": "contact", "label": "Contacts"},
         ],
     },
     {
@@ -156,6 +190,8 @@ GROUPS: Final[list[dict]] = [
             {"key": "payroll", "label": "Payroll Runs"},
             {"key": "payment_method", "label": "Payment Methods"},
             {"key": "credit_card", "label": "Credit Cards"},
+            {"key": "wallet", "label": "Wallet"},
+            {"key": "subscription", "label": "Subscription"},
         ],
     },
     {
@@ -164,6 +200,7 @@ GROUPS: Final[list[dict]] = [
             {"key": "target", "label": "Targets"},
             {"key": "dashboard", "label": "Dashboard"},
             {"key": "insight", "label": "Insights"},
+            {"key": "analytics", "label": "Analytics"},
         ],
     },
     {
@@ -201,14 +238,23 @@ def _resource_node(node: dict, scopes: dict[tuple[str, str], str]) -> dict:
     return out
 
 
-def build_permission_groups(scopes: dict[tuple[str, str], str]) -> list[dict]:
-    return [
-        {
-            "title": group["title"],
-            "resources": [_resource_node(resource, scopes) for resource in group["resources"]],
-        }
-        for group in GROUPS
-    ]
+def _visible_node(node: dict, allowed: frozenset[str]) -> dict | None:
+    children = [c for c in node.get("children") or [] if c["key"] in allowed]
+    if node["key"] not in allowed and not children:
+        return None
+    if "children" in node:
+        return {**node, "children": children}
+    return node
+
+
+def build_permission_groups(scopes: dict[tuple[str, str], str], org_type: str | None = None) -> list[dict]:
+    allowed = resources_for(org_type) if org_type else RESOURCE_SET
+    groups = []
+    for group in GROUPS:
+        nodes = [n for n in (_visible_node(r, allowed) for r in group["resources"]) if n is not None]
+        if nodes:
+            groups.append({"title": group["title"], "resources": [_resource_node(n, scopes) for n in nodes]})
+    return groups
 
 
 _ui_keys = ui_resource_keys()
@@ -220,3 +266,5 @@ _bad_ra = {r for r in RESOURCE_ACTIONS if r not in RESOURCE_SET} | {
     a for acts in RESOURCE_ACTIONS.values() for a in acts if a not in ACTION_SET
 }
 assert not _bad_ra, f"permissions.RESOURCE_ACTIONS has non-canonical entries: {sorted(_bad_ra)}"
+_bad_phone = PHONE_RESOURCES - RESOURCE_SET
+assert not _bad_phone, f"permissions.PHONE_RESOURCES has non-canonical entries: {sorted(_bad_phone)}"

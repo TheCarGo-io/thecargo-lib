@@ -28,6 +28,11 @@ def get_portal_jwt_secret() -> str:
     return os.environ.get("PORTAL_JWT_SECRET_KEY", "change-me-portal")
 
 
+def get_allowed_org_types() -> frozenset[str]:
+    raw = os.environ.get("ALLOWED_ORG_TYPES", "")
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
+
+
 def set_redis_url(url: str):
     global _redis_url, _redis_client
     _redis_url = url

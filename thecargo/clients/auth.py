@@ -1,7 +1,7 @@
 import os
 from uuid import UUID
 
-from thecargo.cache import cache_aside
+from thecargo.cache import cache_aside, cache_invalidate
 from thecargo.clients.service import ServiceClient
 from thecargo.utils.timezone import UTC as UTC_ZONE
 
@@ -34,6 +34,53 @@ async def org_timezone(organization_id: UUID | str) -> str:
         return tz
 
     return await cache_aside(f"org:tz:{organization_id}", _load, ttl=_TTL_SECONDS)
+
+
+def org_type_key(organization_id: UUID | str) -> str:
+    return f"org:type:{organization_id}"
+
+
+async def org_type(organization_id: UUID | str) -> str:
+    """The organization's product type (broker, carrier, phone) for contexts with no request token.
+
+    A request carries it in the ``ot`` claim; tasks and consumers ask here. An
+    organization row without a type predates the column and is a broker.
+    """
+
+    async def _load() -> str:
+        data = await AuthServiceClient().organization(organization_id)
+        return data.get("type") or "broker"
+
+    return await cache_aside(org_type_key(organization_id), _load, ttl=_TTL_SECONDS)
+
+
+async def invalidate_org_type(organization_id: UUID | str) -> None:
+    await cache_invalidate(org_type_key(organization_id))
+
+
+_sync_type_cache: dict[str, tuple[float, str]] = {}
+
+
+def org_type_sync(organization_id: "UUID | str") -> str:
+    """`org_type` for sync Celery paths — an organization's type never changes to or from phone."""
+    import time as _time
+
+    import httpx
+
+    key = str(organization_id)
+    hit = _sync_type_cache.get(key)
+    if hit and _time.monotonic() - hit[0] < _TTL_SECONDS:
+        return hit[1]
+    base = os.environ.get("AUTH_URL") or os.environ.get("AUTH_SERVICE_URL", "http://localhost:8000")
+    resp = httpx.get(
+        f"{base.rstrip('/')}/api/internal/organizations/{key}",
+        headers={"X-Service-Secret": os.environ.get("SERVICE_SECRET_KEY", "")},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    value = (resp.json() or {}).get("type") or "broker"
+    _sync_type_cache[key] = (_time.monotonic(), value)
+    return value
 
 
 _sync_cache: dict[str, tuple[float, str]] = {}
