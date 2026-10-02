@@ -1,6 +1,15 @@
 from typing import Final
 
-from thecargo.permissions import ACTIONS, PHONE_ONLY_RESOURCES, PHONE_ORG_TYPE, PHONE_RESOURCES, RESOURCES
+from thecargo.permissions import (
+    ACTIONS,
+    CARRIER_ORG_TYPE,
+    CARRIER_RESOURCES,
+    ORG_SUPERUSER_ROLE_NAME,
+    PHONE_ONLY_RESOURCES,
+    PHONE_ORG_TYPE,
+    PHONE_RESOURCES,
+    RESOURCES,
+)
 
 # The per-tab toolbar resources that grant the same set of CRUD actions together.
 # `toolbar_activity` is intentionally excluded — it is view-only and granted on its own.
@@ -236,8 +245,72 @@ PHONE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
 }
 
 
+CARRIER_SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in CARRIER_RESOURCES for a in ACTIONS}
+
+# Runs the recruiting desk: every conversation, the templates and campaigns,
+# the reports. Reads who is on the team and how it is set up, changes neither.
+CARRIER_MANAGER: Final[dict[str, str]] = {
+    **{f"{r}.{a}": "all" for r in ("conversation", "template", "campaign", "power_dialer", "tag") for a in ACTIONS},
+    **{
+        f"{r}.view": "all"
+        for r in (
+            "telephony",
+            "phone_number",
+            "sip_credential",
+            "notification",
+            "dashboard",
+            "insight",
+            "analytics",
+            "user",
+            "team",
+            "role",
+            "company_info",
+        )
+    },
+    "telephony.update": "all",
+}
+
+# Calls and texts drivers. Sees their own conversations and numbers, and reads
+# the templates and campaigns a manager wrote.
+CARRIER_OPERATOR: Final[dict[str, str]] = {
+    "telephony.view": "all",
+    "telephony.update": "all",
+    "conversation.view": "own",
+    "conversation.create": "all",
+    "conversation.update": "own",
+    "power_dialer.view": "own",
+    "power_dialer.create": "all",
+    "power_dialer.update": "own",
+    "phone_number.view": "all",
+    "template.view": "all",
+    "campaign.view": "all",
+    "tag.view": "all",
+    "tag.create": "all",
+    "notification.view": "own",
+    "dashboard.view": "own",
+    "analytics.view": "own",
+    "team.view": "all",
+    "company_info.view": "all",
+}
+
+CARRIER_MANAGER_ROLE_NAME: Final[str] = "Manager"
+CARRIER_OPERATOR_ROLE_NAME: Final[str] = "Operator"
+
+# The admin role keeps the name `Superuser`: the CRM tells an organization's
+# admins apart by it, on the backend and in the app.
+CARRIER_TEMPLATES: Final[dict[str, dict[str, str]]] = {
+    ORG_SUPERUSER_ROLE_NAME: CARRIER_SUPERUSER,
+    CARRIER_MANAGER_ROLE_NAME: CARRIER_MANAGER,
+    CARRIER_OPERATOR_ROLE_NAME: CARRIER_OPERATOR,
+}
+
+
 def templates_for(org_type: str | None) -> dict[str, dict[str, str]]:
-    return PHONE_TEMPLATES if org_type == PHONE_ORG_TYPE else TEMPLATES
+    if org_type == PHONE_ORG_TYPE:
+        return PHONE_TEMPLATES
+    if org_type == CARRIER_ORG_TYPE:
+        return CARRIER_TEMPLATES
+    return TEMPLATES
 
 
 def expand_template(template: dict[str, str]) -> dict[str, dict[str, str | None]]:

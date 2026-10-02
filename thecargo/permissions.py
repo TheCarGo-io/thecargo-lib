@@ -107,9 +107,40 @@ PHONE_RESOURCES: Final[frozenset[str]] = PHONE_ONLY_RESOURCES | {
 }
 
 
+CARRIER_ORG_TYPE: Final[str] = "carrier"
+
+# A carrier recruits drivers in the CRM. Its board, leads and files are scoped
+# by operating company inside the CRM itself, so the only permissions a carrier
+# role carries are the ones the shared services check: talking to drivers, and
+# running the organization.
+CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
+    {
+        "conversation",
+        "template",
+        "campaign",
+        "notification",
+        "sip_credential",
+        "power_dialer",
+        "telephony",
+        "phone_number",
+        "tag",
+        "dashboard",
+        "insight",
+        "analytics",
+        "user",
+        "team",
+        "role",
+        "company_info",
+        "audit",
+    }
+)
+
+
 def resources_for(org_type: str | None) -> frozenset[str]:
     if org_type == PHONE_ORG_TYPE:
         return PHONE_RESOURCES
+    if org_type == CARRIER_ORG_TYPE:
+        return CARRIER_RESOURCES
     return RESOURCE_SET - PHONE_ONLY_RESOURCES
 
 
