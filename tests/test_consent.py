@@ -101,7 +101,7 @@ def test_do_not_text_same_line_blocks_all_send_types():
         assert r.reason == "do_not_text_same_line"
 
 
-def test_do_not_text_other_line_manual_warns_bulk_blocks():
+def test_do_not_text_other_line_warns_for_every_send_type():
     rows = [
         _row(
             channel=ConsentChannel.TEXT,
@@ -110,17 +110,28 @@ def test_do_not_text_other_line_manual_warns_bulk_blocks():
             status=ConsentStatus.DO_NOT_TEXT,
         )
     ]
-    manual = evaluate(rows, channel=ConsentChannel.TEXT, our_line=LINE_B, send_type=SendType.MANUAL)
+    for st in SendType:
+        r = evaluate(rows, channel=ConsentChannel.TEXT, our_line=LINE_B, send_type=st)
+        assert r.decision is Decision.WARN
+        assert r.reason == "do_not_text_other_line"
+        assert r.line_number == LINE_A
+
+
+def test_do_not_text_unknown_line_blocks_bulk_warns_manual():
+    rows = [
+        _row(
+            channel=ConsentChannel.TEXT,
+            scope=ConsentScope.LINE,
+            line_number=LINE_A,
+            status=ConsentStatus.DO_NOT_TEXT,
+        )
+    ]
+    manual = evaluate(rows, channel=ConsentChannel.TEXT, our_line=None, send_type=SendType.MANUAL)
     assert manual.decision is Decision.WARN
-    assert manual.reason == "do_not_text_other_line_manual"
-
-    mass = evaluate(rows, channel=ConsentChannel.TEXT, our_line=LINE_B, send_type=SendType.MASS)
-    assert mass.decision is Decision.BLOCK
-    assert mass.reason == "do_not_text_other_line_bulk"
-
-    auto = evaluate(rows, channel=ConsentChannel.TEXT, our_line=LINE_B, send_type=SendType.AUTOMATED)
-    assert auto.decision is Decision.BLOCK
-    assert auto.reason == "do_not_text_other_line_bulk"
+    for st in (SendType.MASS, SendType.AUTOMATED):
+        r = evaluate(rows, channel=ConsentChannel.TEXT, our_line=None, send_type=st)
+        assert r.decision is Decision.BLOCK
+        assert r.reason == "do_not_text_other_line_bulk"
 
 
 def test_do_not_text_does_not_affect_calls():

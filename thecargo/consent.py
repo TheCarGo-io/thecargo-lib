@@ -216,9 +216,9 @@ def evaluate(
             return _block(effective, reason="do_not_text_legacy_any_line")
         if our_line is not None and row_line == our_line:
             return _block(effective, reason="do_not_text_same_line")
-        if send_type in (SendType.MASS, SendType.AUTOMATED):
+        if our_line is None and send_type in (SendType.MASS, SendType.AUTOMATED):
             return _block(effective, reason="do_not_text_other_line_bulk")
-        return _warn(effective, reason="do_not_text_other_line_manual")
+        return _warn(effective, reason="do_not_text_other_line")
 
     return _ALLOW
 
