@@ -8,13 +8,14 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from thecargo.dependencies import auth as auth_dep
 from thecargo.permissions import (
+    CARRIER_RESOURCES,
     PHONE_ONLY_RESOURCES,
     PHONE_RESOURCES,
     RESOURCE_SET,
     build_permission_groups,
     resources_for,
 )
-from thecargo.role_templates import PHONE_TEMPLATES, SUPERUSER, TEMPLATES, templates_for
+from thecargo.role_templates import CARRIER_TEMPLATES, PHONE_TEMPLATES, SUPERUSER, TEMPLATES, templates_for
 
 SECRET = "test-secret-at-least-thirty-two-bytes"
 
@@ -28,10 +29,45 @@ def _keys(groups: list[dict]) -> set[str]:
     return keys
 
 
-def test_broker_and_carrier_never_see_phone_only_resources():
+def test_broker_never_sees_phone_only_resources():
     assert resources_for("broker") == RESOURCE_SET - PHONE_ONLY_RESOURCES
-    assert resources_for("carrier") == resources_for("broker")
     assert not _keys(build_permission_groups({}, "broker")) & PHONE_ONLY_RESOURCES
+
+
+def test_carrier_editor_shows_only_what_a_carrier_uses():
+    assert resources_for("carrier") == CARRIER_RESOURCES
+    assert _keys(build_permission_groups({}, "carrier")) == CARRIER_RESOURCES
+    assert not CARRIER_RESOURCES & {"shipment", "lead", "quote", "order", "customer", "carrier", "loadboard", "payment"}
+
+
+def test_carrier_roles_are_superuser_manager_and_operator():
+    templates = templates_for("carrier")
+
+    assert templates is CARRIER_TEMPLATES
+    assert list(templates) == ["Superuser", "Manager", "Operator"]
+    for template in templates.values():
+        assert {key.split(".")[0] for key in template} <= CARRIER_RESOURCES
+
+
+def test_a_carrier_operator_calls_and_texts_but_runs_nothing():
+    operator = templates_for("carrier")["Operator"]
+
+    assert (operator["telephony.view"], operator["telephony.update"]) == ("all", "all")
+    assert (operator["conversation.view"], operator["conversation.create"]) == ("own", "all")
+    assert not {key for key in operator if key.split(".")[0] in {"user", "role", "audit", "insight"}}
+    assert not {key for key in operator if key.endswith(".delete")}
+
+
+def test_a_carrier_manager_sees_every_conversation_and_changes_no_users():
+    manager = templates_for("carrier")["Manager"]
+
+    assert manager["conversation.view"] == "all"
+    assert manager["insight.view"] == "all"
+    assert {key for key in manager if key.startswith(("user.", "role.", "team."))} == {
+        "user.view",
+        "role.view",
+        "team.view",
+    }
 
 
 def test_phone_editor_shows_only_phone_resources():
