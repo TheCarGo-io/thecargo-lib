@@ -49,6 +49,15 @@ def test_carrier_roles_are_superuser_manager_and_operator():
         assert {key.split(".")[0] for key in template} <= CARRIER_RESOURCES
 
 
+def test_a_carrier_admin_reads_the_subscription_and_changes_nothing_in_it():
+    templates = templates_for("carrier")
+
+    assert "subscription" in resources_for("carrier")
+    assert "wallet" not in resources_for("carrier")
+    assert [key for key in templates["Superuser"] if key.startswith("subscription.")] == ["subscription.view"]
+    assert not {key for name in ("Manager", "Operator") for key in templates[name] if key.startswith("subscription.")}
+
+
 def test_a_carrier_operator_calls_and_texts_but_runs_nothing():
     operator = templates_for("carrier")["Operator"]
 

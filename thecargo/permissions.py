@@ -112,7 +112,8 @@ CARRIER_ORG_TYPE: Final[str] = "carrier"
 # A carrier recruits drivers in the CRM. Its board, leads and files are scoped
 # by operating company inside the CRM itself, so the only permissions a carrier
 # role carries are the ones the shared services check: talking to drivers, and
-# running the organization.
+# running the organization. `subscription` is there to be read: a carrier pays
+# us directly, so its plan is changed and marked paid on our side.
 CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
     {
         "conversation",
@@ -132,6 +133,7 @@ CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
         "role",
         "company_info",
         "audit",
+        "subscription",
     }
 )
 
