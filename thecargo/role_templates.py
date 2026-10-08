@@ -245,7 +245,9 @@ PHONE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
 }
 
 
-CARRIER_SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in CARRIER_RESOURCES for a in ACTIONS}
+CARRIER_SUPERUSER: Final[dict[str, str]] = {
+    f"{r}.{a}": "all" for r in CARRIER_RESOURCES for a in ACTIONS if r != "subscription" or a == "view"
+}
 
 # Runs the recruiting desk: every conversation, the templates and campaigns,
 # the reports. Reads who is on the team and how it is set up, changes neither.

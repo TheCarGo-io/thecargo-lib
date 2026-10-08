@@ -60,6 +60,7 @@ FEATURES: Final[dict[str, Feature]] = {
 
 LIMITS: Final[dict[str, str]] = {
     "included.voice_minutes": "Voice minutes per user per month",
+    "included.sms_daily": "Texts per user per day",
     "included.numbers": "Phone numbers per user",
     "included.ai_agent_minutes": "AI agent minutes per organization per month",
 }
