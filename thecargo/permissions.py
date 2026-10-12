@@ -86,9 +86,10 @@ RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
 
 PHONE_ORG_TYPE: Final[str] = "phone"
 
-PHONE_ONLY_RESOURCES: Final[frozenset[str]] = frozenset({"contact", "wallet", "subscription"})
+PHONE_ONLY_RESOURCES: Final[frozenset[str]] = frozenset({"contact", "wallet"})
 
 PHONE_RESOURCES: Final[frozenset[str]] = PHONE_ONLY_RESOURCES | {
+    "subscription",
     "analytics",
     "conversation",
     "template",

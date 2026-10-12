@@ -34,6 +34,25 @@ def test_broker_never_sees_phone_only_resources():
     assert not _keys(build_permission_groups({}, "broker")) & PHONE_ONLY_RESOURCES
 
 
+def test_a_broker_owner_runs_its_subscription_and_other_roles_only_when_granted():
+    assert "subscription" in resources_for("broker")
+    assert "subscription" in _keys(build_permission_groups({}, "broker"))
+    assert {"subscription.view", "subscription.update"} <= {key for key in SUPERUSER if SUPERUSER[key] == "all"}
+    assert not {
+        key
+        for name, template in TEMPLATES.items()
+        if name != "Superuser"
+        for key in template
+        if key.startswith("subscription.")
+    }
+    assert not {"wallet", "contact"} & resources_for("broker")
+
+
+def test_a_phone_organization_keeps_its_subscription_and_wallet():
+    assert {"subscription", "wallet", "contact"} <= PHONE_RESOURCES
+    assert {"subscription.view", "subscription.update", "wallet.view"} <= set(PHONE_TEMPLATES["Owner"])
+
+
 def test_carrier_editor_shows_only_what_a_carrier_uses():
     assert resources_for("carrier") == CARRIER_RESOURCES
     assert _keys(build_permission_groups({}, "carrier")) == CARRIER_RESOURCES
