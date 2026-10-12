@@ -1,12 +1,13 @@
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import ForeignKey, create_engine, delete, func, select, update
+from sqlalchemy import ForeignKey, create_engine, delete, func, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, aliased, mapped_column, relationship
 
 from thecargo.context import ANY_COMPANY, active_company, as_company, set_active_company
 from thecargo.db.company_scope import install_company_scope, uninstall_company_scope
 from thecargo.models.base import CompanyScoped
+from thecargo.repositories.base import in_company
 
 
 class Base(DeclarativeBase):
@@ -120,6 +121,26 @@ def test_a_row_of_another_company_cannot_be_fetched_by_its_id(db):
         assert db.get(Customer, ocean) is None
         assert db.scalar(select(Customer).where(Customer.id == ocean)) is None
     assert db.get(Customer, ocean).name == "Ocean"
+
+
+def test_a_row_the_session_already_holds_is_handed_back_whatever_the_company(db):
+    ocean = db.scalar(select(Customer).where(Customer.name == "Ocean"))
+
+    with as_company(BLUE):
+        held = db.get(Customer, ocean.id)
+        assert db.scalar(select(Customer.name).where(Customer.id == ocean.id)) is None
+
+    assert held is ocean
+    assert not in_company(BLUE, held.company_id)
+
+
+def test_core_statements_are_not_reached(db):
+    with as_company(BLUE):
+        by_table = db.execute(select(Customer.__table__.c.name)).scalars().all()
+        by_text = db.execute(text("SELECT name FROM scope_customers")).scalars().all()
+
+    assert sorted(by_table) == ["Blue", "Ocean", "Org"]
+    assert sorted(by_text) == ["Blue", "Ocean", "Org"]
 
 
 def test_update_and_delete_touch_only_the_active_company(db):

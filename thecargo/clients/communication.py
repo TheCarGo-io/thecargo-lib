@@ -5,6 +5,8 @@ from uuid import UUID
 
 import httpx
 
+from thecargo.context import ANY_COMPANY, active_company
+from thecargo.dependencies.service_auth import company_header
 from thecargo.events import publisher
 
 from .service import ServiceClient
@@ -23,6 +25,9 @@ class CommunicationClientError(RuntimeError):
 
 
 class CommunicationClient(ServiceClient):
+    def _headers(self) -> dict:
+        return {**super()._headers(), **company_header()}
+
     async def send_email_by_template(
         self,
         *,
@@ -126,6 +131,9 @@ class CommunicationClient(ServiceClient):
             "user_id": str(user_id) if user_id else None,
         }
         payload = {k: v for k, v in payload.items() if v is not None}
+        company_id = active_company()
+        if company_id is not ANY_COMPANY:
+            payload["company_id"] = str(company_id) if company_id else None
         await publisher.publish(EMAIL_SEND_REQUESTED_TOPIC, payload)
 
 

@@ -274,3 +274,45 @@ def test_the_organization_profile_is_asked_for_the_company_someone_is_in(monkeyp
         asyncio.run(ask(space))
 
     assert asked == [{"company_id": str(company)}, None, None]
+
+
+def test_an_audit_event_names_the_company_of_the_row_it_is_about():
+    from thecargo.audit import _resolve_company_id
+
+    company, elsewhere = uuid4(), uuid4()
+    set_active_company(elsewhere)
+    of_a_scoped_row = _resolve_company_id(Scoped(organization_id=uuid4(), company_id=company))
+    of_a_row_with_its_own_column = _resolve_company_id(Lookalike(organization_id=uuid4(), company_id=company))
+    of_a_row_without_one = _resolve_company_id(Lookalike(organization_id=uuid4()))
+    set_active_company(ANY_COMPANY)
+    with_nobody_signed_in = _resolve_company_id(Lookalike(organization_id=uuid4()))
+
+    assert (of_a_scoped_row, of_a_row_with_its_own_column) == (str(company), str(company))
+    assert of_a_row_without_one == str(elsewhere)
+    assert with_nobody_signed_in is None
+
+
+def test_an_email_asked_of_communication_carries_the_company_it_is_sent_for(monkeypatch):
+    from thecargo.clients import communication
+    from thecargo.clients.communication import CommunicationClient
+
+    published: list[dict] = []
+
+    async def _publish(topic, payload):
+        published.append(payload)
+
+    monkeypatch.setattr(communication.publisher, "publish", _publish)
+    company = uuid4()
+    headers = []
+
+    async def ask(space) -> None:
+        set_active_company(space)
+        headers.append(CommunicationClient("http://communication", service_secret="s")._headers().get(COMPANY_HEADER))
+        await CommunicationClient.send_email_by_template_async(category="invoice", to="a@example.com")
+
+    for space in (company, None, ANY_COMPANY):
+        asyncio.run(ask(space))
+    set_active_company(ANY_COMPANY)
+
+    assert headers == [str(company), "organization", None]
+    assert [sent.get("company_id", "absent") for sent in published] == [str(company), None, "absent"]

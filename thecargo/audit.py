@@ -141,9 +141,7 @@ def _resolve_org_id(explicit: Any, ctx) -> str | None:
 
 
 def _resolve_company_id(obj: Any = None) -> str | None:
-    from thecargo.models.base import CompanyScoped
-
-    company_id = obj.company_id if isinstance(obj, CompanyScoped) else None
+    company_id = getattr(obj, "company_id", None)
     if company_id is None:
         ambient = active_company()
         company_id = None if ambient is ANY_COMPANY else ambient

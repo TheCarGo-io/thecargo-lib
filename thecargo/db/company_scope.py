@@ -38,8 +38,12 @@ def install_company_scope(session_class: type[Session] = Session) -> None:
     task narrows itself with `as_company(...)` once it knows whose work it is doing.
 
     Not reached: a subquery that names the model only in its WHERE, such as
-    `select(1).where(Model.x == ...)`; give it `select_from(Model)`. A Core `insert()`
-    skips the flush, so it sets `company_id` itself.
+    `select(1).where(Model.x == ...)`, `exists().where(...)` or a bare `select(func.count())`;
+    give it `select_from(Model)`. Core statements are not ORM statements: `Model.__table__`,
+    `text()` and a Core `insert()` (which also skips the flush) carry `company_id` themselves.
+    `session.get()` answers from the identity map without a statement, so a row this session
+    loaded while it was in another company, or in none, is handed back as it is: code that
+    changes company halfway through a session checks `in_company(...)` on what it gets.
     """
     if event.contains(session_class, "do_orm_execute", _scope_statement):
         return
