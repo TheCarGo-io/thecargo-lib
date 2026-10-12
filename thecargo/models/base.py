@@ -25,6 +25,10 @@ class SoftDeleteModel(BaseModel):
     deleted_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
 
 
+class CompanyScoped:
+    company_id: Mapped[UUID | None] = mapped_column(default=None)
+
+
 class ReferenceModel(Base):
     __abstract__ = True
 

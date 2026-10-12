@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -34,3 +35,32 @@ def get_audit_context() -> AuditContext:
 
 def set_audit_context(ctx: AuditContext):
     _audit_context.set(ctx)
+
+
+class AnyCompany:
+    def __repr__(self) -> str:
+        return "ANY_COMPANY"
+
+
+ANY_COMPANY = AnyCompany()
+
+CompanyRef = UUID | None | AnyCompany
+
+_active_company: ContextVar[CompanyRef] = ContextVar("active_company", default=ANY_COMPANY)
+
+
+def active_company() -> CompanyRef:
+    return _active_company.get()
+
+
+def set_active_company(company_id: CompanyRef) -> None:
+    _active_company.set(company_id)
+
+
+@contextmanager
+def as_company(company_id: CompanyRef):
+    token = _active_company.set(company_id)
+    try:
+        yield
+    finally:
+        _active_company.reset(token)

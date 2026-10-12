@@ -10,6 +10,7 @@ class CustomerReplica(ReferenceModel):
     __tablename__ = "customer_replicas"
 
     organization_id: Mapped[UUID] = mapped_column(index=True)
+    company_id: Mapped[UUID | None] = mapped_column(default=None)
     first_name: Mapped[str | None] = mapped_column(String(255))
     last_name: Mapped[str | None] = mapped_column(String(255))
     company: Mapped[str | None] = mapped_column(String(255))
