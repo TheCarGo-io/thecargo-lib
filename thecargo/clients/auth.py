@@ -3,6 +3,7 @@ from uuid import UUID
 
 from thecargo.cache import cache_aside, cache_invalidate
 from thecargo.clients.service import ServiceClient
+from thecargo.context import active_company
 from thecargo.utils.timezone import UTC as UTC_ZONE
 
 _TTL_SECONDS = 300
@@ -15,7 +16,10 @@ class AuthServiceClient(ServiceClient):
         )
 
     async def organization(self, organization_id: UUID | str) -> dict:
-        return await self.get(f"/api/internal/organizations/{organization_id}")
+        """The organization's profile; inside a company, with that company's name and contact details."""
+        company_id = active_company()
+        params = {"company_id": str(company_id)} if isinstance(company_id, UUID) else None
+        return await self.get(f"/api/internal/organizations/{organization_id}", params=params)
 
 
 async def org_timezone(organization_id: UUID | str) -> str:
