@@ -5,7 +5,6 @@ from thecargo.permissions import (
     CARRIER_ORG_TYPE,
     CARRIER_RESOURCES,
     ORG_SUPERUSER_ROLE_NAME,
-    PHONE_ONLY_RESOURCES,
     PHONE_ORG_TYPE,
     PHONE_RESOURCES,
     RESOURCES,
@@ -23,9 +22,7 @@ _TOOLBAR_SECTIONS: Final[tuple[str, ...]] = (
     "toolbar_payment",
 )
 
-SUPERUSER: Final[dict[str, str]] = {
-    f"{r}.{a}": "all" for r in RESOURCES if r not in PHONE_ONLY_RESOURCES for a in ACTIONS
-}
+SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in RESOURCES for a in ACTIONS}
 
 MANAGER: Final[dict[str, str]] = {
     "analytics.view": "all",

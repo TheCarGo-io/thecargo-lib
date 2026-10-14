@@ -1,5 +1,5 @@
 from thecargo.features import FEATURES, GATED_RESOURCES, allowed_resources
-from thecargo.permissions import PHONE_ONLY_RESOURCES, RESOURCE_SET
+from thecargo.permissions import CARRIER_RESOURCES, PHONE_RESOURCES, RESOURCE_SET
 
 
 def test_every_feature_resource_is_a_permission():
@@ -16,7 +16,17 @@ def test_start_plan_loses_reports_campaigns_and_dialer_only():
     assert not {"analytics", "campaign", "automation", "power_dialer"} & allowed
 
 
-def test_broker_resources_are_never_gated():
-    broker_only = RESOURCE_SET - PHONE_ONLY_RESOURCES - GATED_RESOURCES
-    assert broker_only <= allowed_resources(set())
-    assert {"shipment", "lead", "order", "carrier", "loadboard"} <= broker_only
+def test_the_broker_workspace_needs_the_os_feature():
+    workspace = {"shipment", "lead", "quote", "order", "customer", "carrier", "loadboard", "payment"}
+
+    assert not workspace & allowed_resources({"phone", "campaign", "analytics"})
+    assert workspace <= allowed_resources({"os"})
+
+
+def test_os_takes_nothing_from_a_carrier_or_a_phone_organization():
+    assert not set(FEATURES["os"].resources) & (CARRIER_RESOURCES | PHONE_RESOURCES)
+
+
+def test_admin_screens_wallet_and_reports_are_never_gated():
+    ungated = {"user", "team", "role", "company_info", "audit", "subscription", "wallet", "dashboard", "insight"}
+    assert ungated <= allowed_resources(set())
