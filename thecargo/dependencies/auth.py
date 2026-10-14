@@ -39,6 +39,9 @@ class TokenPayload:
     otz: str | None = None
     org_type: str = DEFAULT_ORG_TYPE
     company_id: UUID | None = None
+    # What the person said they do at signup: broker, dispatcher or driver.
+    # Shapes what they are offered, never what they may do.
+    user_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,7 @@ async def get_current_user(
         otz=payload.get("otz"),
         org_type=payload.get("ot") or DEFAULT_ORG_TYPE,
         company_id=UUID(payload["cid"]) if payload.get("cid") else None,
+        user_type=payload.get("ut"),
     )
 
     _enforce_org_type(user)
