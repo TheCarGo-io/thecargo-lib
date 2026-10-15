@@ -247,9 +247,11 @@ CARRIER_SUPERUSER: Final[dict[str, str]] = {
 }
 
 # Runs the recruiting desk: every conversation, the templates and campaigns,
-# the reports. Reads who is on the team and how it is set up, changes neither.
+# the reports, and the contact book. Reads who is on the team and how it is
+# set up, changes neither.
 CARRIER_MANAGER: Final[dict[str, str]] = {
     **{f"{r}.{a}": "all" for r in ("conversation", "template", "campaign", "power_dialer", "tag") for a in ACTIONS},
+    **{f"contact.{a}": "all" for a in ("view", "create", "update")},
     **{
         f"{r}.view": "all"
         for r in (
@@ -269,11 +271,13 @@ CARRIER_MANAGER: Final[dict[str, str]] = {
     "telephony.update": "all",
 }
 
-# Calls and texts drivers. Sees their own conversations and numbers, and reads
-# the templates and campaigns a manager wrote.
+# Calls and texts drivers. Sees their own conversations and numbers, reads
+# the templates and campaigns a manager wrote, and finds and adds contacts.
 CARRIER_OPERATOR: Final[dict[str, str]] = {
     "telephony.view": "all",
     "telephony.update": "all",
+    "contact.view": "all",
+    "contact.create": "all",
     "conversation.view": "own",
     "conversation.create": "all",
     "conversation.update": "own",
