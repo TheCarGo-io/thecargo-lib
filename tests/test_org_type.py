@@ -97,6 +97,16 @@ def test_a_carrier_manager_sees_every_conversation_and_changes_no_users():
     }
 
 
+def test_every_carrier_role_finds_and_adds_contacts_and_only_the_superuser_deletes_them():
+    templates = templates_for("carrier")
+
+    assert {name: sorted(key for key in role if key.startswith("contact.")) for name, role in templates.items()} == {
+        "Superuser": ["contact.create", "contact.delete", "contact.update", "contact.view"],
+        "Manager": ["contact.create", "contact.update", "contact.view"],
+        "Operator": ["contact.create", "contact.view"],
+    }
+
+
 def test_phone_editor_shows_only_phone_resources():
     assert _keys(build_permission_groups({}, "phone")) == PHONE_RESOURCES
 
