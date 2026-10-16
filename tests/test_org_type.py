@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
 from thecargo.dependencies import auth as auth_dep
+from thecargo.features import FEATURES
 from thecargo.permissions import (
     CARRIER_RESOURCES,
     PHONE_RESOURCES,
@@ -67,13 +68,53 @@ def test_carrier_roles_are_superuser_manager_and_operator():
         assert {key.split(".")[0] for key in template} <= CARRIER_RESOURCES
 
 
-def test_a_carrier_admin_reads_the_subscription_and_changes_nothing_in_it():
+def test_a_carrier_admin_chooses_and_pays_for_the_plan_and_nobody_else_touches_it():
     templates = templates_for("carrier")
 
     assert "subscription" in resources_for("carrier")
     assert {"wallet", "contact"} <= resources_for("carrier")
-    assert [key for key in templates["Superuser"] if key.startswith("subscription.")] == ["subscription.view"]
+    assert sorted(key for key in templates["Superuser"] if key.startswith("subscription.")) == [
+        "subscription.create",
+        "subscription.delete",
+        "subscription.update",
+        "subscription.view",
+    ]
     assert not {key for name in ("Manager", "Operator") for key in templates[name] if key.startswith("subscription.")}
+
+
+def test_a_broker_from_the_app_seeds_roles_that_call_and_one_from_the_console_keeps_its_roles():
+    console, app = templates_for("broker"), templates_for("broker", from_app=True)
+    calls = {"telephony.view", "telephony.update", "phone_number.view"}
+
+    assert console is TEMPLATES
+    assert {name for name, role in console.items() if calls <= role.keys()} == {"Superuser"}
+    assert {name for name, role in app.items() if calls <= role.keys()} == {
+        "Superuser",
+        "Manager",
+        "Sales Agent",
+        "Dispatcher",
+        "Support Agent",
+    }
+    assert app["Manager"]["conversation.create"] == "all"
+    assert app["Accountant"].keys() - console["Accountant"].keys() == {"contact.view"}, "it reads the book, no lines"
+    assert templates_for("carrier", from_app=True) is CARRIER_TEMPLATES
+
+
+def test_every_role_of_a_broker_from_the_app_keeps_the_contact_book_once_the_plan_takes_customers_away():
+    app, console = templates_for("broker", from_app=True), templates_for("broker")
+    os_only = set(FEATURES["os"].resources)
+    without_os = {name: {key for key in role if key.split(".")[0] not in os_only} for name, role in app.items()}
+
+    assert {name for name, keys in without_os.items() if "contact.view" in keys} == set(app)
+    assert {name for name, keys in without_os.items() if {"contact.create", "contact.update"} <= keys} == {
+        "Superuser",
+        "Manager",
+        "Sales Agent",
+        "Dispatcher",
+        "Support Agent",
+    }
+    assert "contact.delete" not in app["Manager"], "only the Superuser deletes, as with customers"
+    assert {name for name, role in console.items() if "contact.view" in role} == {"Superuser"}
 
 
 def test_a_carrier_operator_calls_and_texts_but_runs_nothing():
