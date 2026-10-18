@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import logging
 import math
@@ -8,7 +9,6 @@ from dataclasses import dataclass, field
 import jwt
 import redis.asyncio as aioredis
 from fastapi import Request
-from redis.exceptions import RedisError
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -88,6 +88,7 @@ class RateLimitMiddleware:
         self.config = config
         self._redis: aioredis.Redis | None = None
         self._script = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._paused_until = 0.0
         self._reported: dict[str, tuple[float, int]] = {}
 
@@ -134,22 +135,24 @@ class RateLimitMiddleware:
     async def _take(self, org_id: str) -> int | None:
         if time.monotonic() < self._paused_until:
             return None
-        if self._redis is None:
-            pool = aioredis.BlockingConnectionPool.from_url(
-                self.config.redis_url,
-                max_connections=20,
-                timeout=0.1,
-                socket_timeout=0.1,
-                socket_connect_timeout=0.1,
-            )
-            self._redis = aioredis.Redis(connection_pool=pool)
-            self._script = self._redis.register_script(TOKEN_BUCKET_SCRIPT)
         try:
+            loop = asyncio.get_running_loop()
+            if self._loop is not loop:
+                pool = aioredis.BlockingConnectionPool.from_url(
+                    self.config.redis_url,
+                    max_connections=20,
+                    timeout=0.1,
+                    socket_timeout=0.1,
+                    socket_connect_timeout=0.1,
+                )
+                self._redis = aioredis.Redis(connection_pool=pool)
+                self._script = self._redis.register_script(TOKEN_BUCKET_SCRIPT)
+                self._loop = loop
             retry_ms = await self._script(
                 keys=[f"ratelimit:org:{self.config.service}:{org_id}"],
                 args=[self.config.per_minute / 60, self.config.burst],
             )
-        except (RedisError, OSError) as exc:
+        except Exception as exc:
             self._paused_until = time.monotonic() + PAUSE_AFTER_REDIS_ERROR
             log.warning("org rate limit off for %ss, redis failed: %r", PAUSE_AFTER_REDIS_ERROR, exc)
             return None

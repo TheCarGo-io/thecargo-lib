@@ -209,3 +209,38 @@ def test_redis_down_fails_open_and_pauses_the_limiter(caplog):
     assert statuses == [200, 200, 200]
     failures = [r for r in caplog.records if "redis failed" in r.getMessage()]
     assert len(failures) == 1
+
+
+@needs_redis
+def test_the_bucket_key_carries_the_service_and_the_org():
+    org_id = str(uuid4())
+    config = _config(service="shipment-test")
+
+    _statuses(config, [_scope(token=_token(org_id))])
+
+    assert redis.Redis.from_url(REDIS_URL).exists(f"ratelimit:org:shipment-test:{org_id}") == 1
+
+
+@needs_redis
+def test_one_middleware_keeps_working_across_event_loops():
+    token = _token(str(uuid4()))
+    middleware = RateLimitMiddleware(_app, _config())
+
+    first = asyncio.run(_call(middleware, _scope(token=token)))[0]
+    second = asyncio.run(_call(middleware, _scope(token=token)))[0]
+    third = asyncio.run(_call(middleware, _scope(token=token)))[0]
+
+    assert [first, second, third] == [200, 200, 429]
+
+
+def test_any_limiter_failure_lets_the_request_through(monkeypatch):
+    token = _token(str(uuid4()))
+
+    def broken(*a, **k):
+        raise RuntimeError("attached to a different loop")
+
+    monkeypatch.setattr("redis.asyncio.BlockingConnectionPool.from_url", broken)
+
+    statuses = _statuses(_config(), [_scope(token=token)] * 2)
+
+    assert statuses == [200, 200]
