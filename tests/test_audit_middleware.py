@@ -115,6 +115,28 @@ def test_a_bad_token_leaves_an_anonymous_context():
     assert seen["ctx"].ip_address == "1.2.3.4"
 
 
+def test_the_callers_context_is_restored_after_the_request():
+    from thecargo.context import AuditContext, set_active_company, set_audit_context
+
+    app = FastAPI()
+
+    @app.get("/read")
+    async def read():
+        set_active_company(uuid4())
+        return {"ok": True}
+
+    async def scenario() -> tuple:
+        mine = AuditContext()
+        company = uuid4()
+        set_audit_context(mine)
+        set_active_company(company)
+        client = _Client()
+        await AuditMiddleware(app, jwt_secret=SECRET)(_scope(), client.receive, client.send)
+        return get_audit_context() is mine, active_company() == company
+
+    assert asyncio.run(scenario()) == (True, True)
+
+
 def test_non_http_scopes_pass_through_untouched():
     calls: list[str] = []
 

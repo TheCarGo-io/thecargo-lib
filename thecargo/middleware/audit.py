@@ -5,7 +5,15 @@ from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from thecargo.context import ANY_COMPANY, AuditContext, AuditUser, set_active_company, set_audit_context
+from thecargo.context import (
+    ANY_COMPANY,
+    AuditContext,
+    AuditUser,
+    active_company,
+    get_audit_context,
+    set_active_company,
+    set_audit_context,
+)
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -76,6 +84,7 @@ class AuditMiddleware:
             except Exception:
                 pass
 
+        previous_ctx, previous_company = get_audit_context(), active_company()
         set_audit_context(ctx)
         set_active_company(ANY_COMPANY)
 
@@ -84,4 +93,8 @@ class AuditMiddleware:
                 MutableHeaders(scope=message)["X-Request-ID"] = str(request_id)
             await send(message)
 
-        await self.app(scope, receive, send_with_request_id)
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        finally:
+            set_audit_context(previous_ctx)
+            set_active_company(previous_company)
