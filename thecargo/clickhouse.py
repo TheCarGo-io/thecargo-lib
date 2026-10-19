@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import clickhouse_connect
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 _config: dict[str, Any] | None = None
 _clients: dict[asyncio.AbstractEventLoop, AsyncClient] = {}
+_closers: dict[asyncio.AbstractEventLoop, AsyncGenerator[None, None]] = {}
 
 
 def configure_clickhouse(
@@ -49,14 +51,26 @@ async def init_clickhouse(**kwargs: Any) -> None:
 async def get_client() -> AsyncClient:
     if _config is None:
         raise RuntimeError("ClickHouse not configured — call init_clickhouse() in lifespan")
-    for stale in [loop for loop in _clients if loop.is_closed()]:
+    for stale in [loop for loop in _closers if loop.is_closed()]:
+        _closers.pop(stale)
         _clients.pop(stale, None)
     loop = asyncio.get_running_loop()
     client = _clients.get(loop)
     if client is None:
         client = await clickhouse_connect.get_async_client(**_config)
         _clients[loop] = client
+        if loop not in _closers:
+            closer = _close_with_loop()
+            await closer.asend(None)
+            _closers[loop] = closer
     return client
+
+
+async def _close_with_loop() -> AsyncGenerator[None, None]:
+    try:
+        yield
+    finally:
+        await close_clickhouse()
 
 
 async def close_clickhouse() -> None:
