@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Any
 
 import boto3
@@ -34,14 +35,20 @@ def init_public_storage(
         _bucket = bucket
         _public_url = (public_url or endpoint_url).rstrip("/")
 
-        try:
-            _client.head_bucket(Bucket=_bucket)
-        except ClientError as exc:
-            logger.warning("Public R2 bucket not reachable (%s): %s", _bucket, exc)
+        threading.Thread(
+            target=_check_bucket, args=(_client, _bucket), name="r2-public-bucket-check", daemon=True
+        ).start()
         logger.info("Public R2 storage connected: %s", _bucket)
     except Exception as exc:
         logger.warning("Public R2 not available: %s. Public uploads disabled.", exc)
         _client = None
+
+
+def _check_bucket(client: Any, bucket: str) -> None:
+    try:
+        client.head_bucket(Bucket=bucket)
+    except Exception as exc:
+        logger.warning("Public R2 bucket not reachable (%s): %s", bucket, exc)
 
 
 def upload_public_bytes(path: str, data: bytes, content_type: str = "application/octet-stream") -> str:
