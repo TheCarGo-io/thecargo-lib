@@ -173,11 +173,20 @@ class QueueLengthCollector:
         family = GaugeMetricFamily("celery_queue_length", "Messages waiting in a Celery queue", labels=("queue",))
         try:
             with self.app.pool.acquire(block=True, timeout=5) as conn:
-                for queue in self.queues:
-                    family.add_metric((queue,), _queue_length(conn, queue))
+                try:
+                    lengths = _queue_lengths(conn, self.queues)
+                except conn.connection_errors:
+                    conn.collect()
+                    lengths = _queue_lengths(conn, self.queues)
+            for queue, length in lengths:
+                family.add_metric((queue,), length)
         except Exception as exc:
             logger.warning("celery queue length unavailable: %s", exc)
         yield family
+
+
+def _queue_lengths(conn, queues: list[str]) -> list[tuple[str, int]]:
+    return [(queue, _queue_length(conn, queue)) for queue in queues]
 
 
 def _queue_length(conn, queue: str) -> int:

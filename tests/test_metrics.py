@@ -192,6 +192,25 @@ def test_queue_length_is_read_from_the_broker_and_missing_queues_are_empty():
     }
 
 
+def test_a_pooled_connection_the_broker_dropped_is_reopened_within_the_same_scrape(monkeypatch):
+    app = Celery("metrics_reset", broker="memory://")
+    app.send_task("metrics_reset.job", queue="metrics_reset_depth")
+    read_length = metrics._queue_length
+    attempts = []
+
+    def reset_once(conn, queue):
+        attempts.append(queue)
+        if len(attempts) == 1:
+            raise conn.connection_errors[0]("Connection reset by peer")
+        return read_length(conn, queue)
+
+    monkeypatch.setattr(metrics, "_queue_length", reset_once)
+
+    (family,) = QueueLengthCollector(app, ["metrics_reset_depth"]).collect()
+
+    assert {s.labels["queue"]: s.value for s in family.samples} == {"metrics_reset_depth": 1}
+
+
 def test_an_unreachable_broker_leaves_queue_length_empty_instead_of_failing_the_scrape():
     app = Celery("metrics_down", broker="redis://127.0.0.1:1/0")
 
