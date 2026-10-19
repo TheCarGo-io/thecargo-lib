@@ -23,6 +23,10 @@ CUSTOMER_FIELDS = (
 _PHONE_FIELDS = ("phone", "secondary_phone", "company_phone")
 
 
+def _company(data: dict) -> UUID | None:
+    return UUID(str(data["company_id"])) if data.get("company_id") else None
+
+
 def _values(data: dict) -> dict:
     out = {k: data.get(k) for k in CUSTOMER_FIELDS}
     for k in _PHONE_FIELDS:
@@ -41,6 +45,7 @@ async def _handle_customer_created(session: AsyncSession, data: dict):
         CustomerReplica(
             id=UUID(data["id"]),
             organization_id=UUID(data["organization_id"]),
+            company_id=_company(data),
             **_values(data),
         )
     )
@@ -55,6 +60,8 @@ async def _handle_customer_updated(session: AsyncSession, data: dict):
     for field in CUSTOMER_FIELDS:
         if field in data:
             setattr(replica, field, values[field])
+    if "company_id" in data:
+        replica.company_id = _company(data)
 
 
 async def _handle_customer_deleted(session: AsyncSession, data: dict):
@@ -102,7 +109,12 @@ async def bootstrap_customers(session_factory: async_sessionmaker, shipment_serv
 
     async def _store(rows: list[dict]) -> int:
         records = [
-            {"id": UUID(c["id"]), "organization_id": UUID(c["organization_id"]), **_values(c)}
+            {
+                "id": UUID(c["id"]),
+                "organization_id": UUID(c["organization_id"]),
+                "company_id": _company(c),
+                **_values(c),
+            }
             for c in rows
             if c.get("organization_id")
         ]

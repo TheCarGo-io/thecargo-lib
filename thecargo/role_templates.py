@@ -5,7 +5,6 @@ from thecargo.permissions import (
     CARRIER_ORG_TYPE,
     CARRIER_RESOURCES,
     ORG_SUPERUSER_ROLE_NAME,
-    PHONE_ONLY_RESOURCES,
     PHONE_ORG_TYPE,
     PHONE_RESOURCES,
     RESOURCES,
@@ -23,9 +22,7 @@ _TOOLBAR_SECTIONS: Final[tuple[str, ...]] = (
     "toolbar_payment",
 )
 
-SUPERUSER: Final[dict[str, str]] = {
-    f"{r}.{a}": "all" for r in RESOURCES if r not in PHONE_ONLY_RESOURCES for a in ACTIONS
-}
+SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in RESOURCES for a in ACTIONS}
 
 MANAGER: Final[dict[str, str]] = {
     "analytics.view": "all",
@@ -185,6 +182,28 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
     "Support Agent": SUPPORT_AGENT,
 }
 
+# A broker that signed up in the app works the phone: everyone it seeds calls from the
+# organization's lines and keeps the contact book, the accountant reads it, and the
+# manager texts too. Without the OS the plan takes `customer` away, so the contact book
+# is what these roles look callers up in. A broker made in the console sells through
+# the OS and keeps the roles above as they are.
+_ON_THE_LINES: Final[dict[str, str]] = {
+    "telephony.view": "all",
+    "telephony.update": "all",
+    "phone_number.view": "all",
+    "contact.view": "all",
+    "contact.create": "all",
+    "contact.update": "all",
+}
+
+APP_BROKER_GRANTS: Final[dict[str, dict[str, str]]] = {
+    "Manager": {**_ON_THE_LINES, "conversation.create": "all"},
+    "Sales Agent": _ON_THE_LINES,
+    "Dispatcher": _ON_THE_LINES,
+    "Support Agent": _ON_THE_LINES,
+    "Accountant": {"contact.view": "all"},
+}
+
 PHONE_OWNER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in PHONE_RESOURCES for a in ACTIONS}
 
 PHONE_ADMIN: Final[dict[str, str]] = {
@@ -245,14 +264,14 @@ PHONE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
 }
 
 
-CARRIER_SUPERUSER: Final[dict[str, str]] = {
-    f"{r}.{a}": "all" for r in CARRIER_RESOURCES for a in ACTIONS if r != "subscription" or a == "view"
-}
+CARRIER_SUPERUSER: Final[dict[str, str]] = {f"{r}.{a}": "all" for r in CARRIER_RESOURCES for a in ACTIONS}
 
 # Runs the recruiting desk: every conversation, the templates and campaigns,
-# the reports. Reads who is on the team and how it is set up, changes neither.
+# the reports, and the contact book. Reads who is on the team and how it is
+# set up, changes neither.
 CARRIER_MANAGER: Final[dict[str, str]] = {
     **{f"{r}.{a}": "all" for r in ("conversation", "template", "campaign", "power_dialer", "tag") for a in ACTIONS},
+    **{f"contact.{a}": "all" for a in ("view", "create", "update")},
     **{
         f"{r}.view": "all"
         for r in (
@@ -272,11 +291,13 @@ CARRIER_MANAGER: Final[dict[str, str]] = {
     "telephony.update": "all",
 }
 
-# Calls and texts drivers. Sees their own conversations and numbers, and reads
-# the templates and campaigns a manager wrote.
+# Calls and texts drivers. Sees their own conversations and numbers, reads
+# the templates and campaigns a manager wrote, and finds and adds contacts.
 CARRIER_OPERATOR: Final[dict[str, str]] = {
     "telephony.view": "all",
     "telephony.update": "all",
+    "contact.view": "all",
+    "contact.create": "all",
     "conversation.view": "own",
     "conversation.create": "all",
     "conversation.update": "own",
@@ -307,11 +328,13 @@ CARRIER_TEMPLATES: Final[dict[str, dict[str, str]]] = {
 }
 
 
-def templates_for(org_type: str | None) -> dict[str, dict[str, str]]:
+def templates_for(org_type: str | None, *, from_app: bool = False) -> dict[str, dict[str, str]]:
     if org_type == PHONE_ORG_TYPE:
         return PHONE_TEMPLATES
     if org_type == CARRIER_ORG_TYPE:
         return CARRIER_TEMPLATES
+    if from_app:
+        return {name: {**template, **APP_BROKER_GRANTS.get(name, {})} for name, template in TEMPLATES.items()}
     return TEMPLATES
 
 

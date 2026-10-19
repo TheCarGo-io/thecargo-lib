@@ -32,7 +32,7 @@ def validate_iana(name: str) -> str:
         raise ValueError(f"not an IANA timezone name: {name!r}")
     try:
         ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
+    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
         raise ValueError(f"unknown IANA timezone: {name!r}") from exc
     return name
 

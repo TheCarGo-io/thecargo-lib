@@ -105,6 +105,25 @@ async def test_a_queue_that_asked_for_it_gets_the_failed_event_back(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_failed_event_can_be_held_before_it_is_sent_back(monkeypatch):
+    waited = []
+
+    async def _sleep(seconds):
+        waited.append(seconds)
+
+    monkeypatch.setattr(consumer_module.asyncio, "sleep", _sleep)
+    queue = await _start(monkeypatch, _explode, requeue_failed=True, requeue_delay=5)
+    first, second = FakeMessage(), FakeMessage(redelivered=True)
+
+    await queue.callback(first)
+    await queue.callback(second)
+
+    assert (first.requeued, first.acked) == (True, False)
+    assert (second.requeued, second.acked) == (False, True)
+    assert waited == [5], "only the try that is sent back waits"
+
+
+@pytest.mark.asyncio
 async def test_an_event_that_fails_twice_is_dropped_rather_than_spun_on(monkeypatch):
     queue = await _start(monkeypatch, _explode, requeue_failed=True)
     message = FakeMessage(redelivered=True)

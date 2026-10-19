@@ -7,9 +7,9 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
 from thecargo.dependencies import auth as auth_dep
+from thecargo.features import FEATURES
 from thecargo.permissions import (
     CARRIER_RESOURCES,
-    PHONE_ONLY_RESOURCES,
     PHONE_RESOURCES,
     RESOURCE_SET,
     build_permission_groups,
@@ -29,9 +29,28 @@ def _keys(groups: list[dict]) -> set[str]:
     return keys
 
 
-def test_broker_never_sees_phone_only_resources():
-    assert resources_for("broker") == RESOURCE_SET - PHONE_ONLY_RESOURCES
-    assert not _keys(build_permission_groups({}, "broker")) & PHONE_ONLY_RESOURCES
+def test_broker_editor_shows_the_whole_catalog():
+    assert resources_for("broker") == RESOURCE_SET
+    assert _keys(build_permission_groups({}, "broker")) == RESOURCE_SET
+
+
+def test_a_broker_owner_runs_its_subscription_and_other_roles_only_when_granted():
+    assert "subscription" in resources_for("broker")
+    assert "subscription" in _keys(build_permission_groups({}, "broker"))
+    assert {"subscription.view", "subscription.update"} <= {key for key in SUPERUSER if SUPERUSER[key] == "all"}
+    assert not {
+        key
+        for name, template in TEMPLATES.items()
+        if name != "Superuser"
+        for key in template
+        if key.startswith("subscription.")
+    }
+    assert {"wallet", "contact"} <= resources_for("broker")
+
+
+def test_a_phone_organization_keeps_its_subscription_and_wallet():
+    assert {"subscription", "wallet", "contact"} <= PHONE_RESOURCES
+    assert {"subscription.view", "subscription.update", "wallet.view"} <= set(PHONE_TEMPLATES["Owner"])
 
 
 def test_carrier_editor_shows_only_what_a_carrier_uses():
@@ -49,13 +68,53 @@ def test_carrier_roles_are_superuser_manager_and_operator():
         assert {key.split(".")[0] for key in template} <= CARRIER_RESOURCES
 
 
-def test_a_carrier_admin_reads_the_subscription_and_changes_nothing_in_it():
+def test_a_carrier_admin_chooses_and_pays_for_the_plan_and_nobody_else_touches_it():
     templates = templates_for("carrier")
 
     assert "subscription" in resources_for("carrier")
-    assert "wallet" not in resources_for("carrier")
-    assert [key for key in templates["Superuser"] if key.startswith("subscription.")] == ["subscription.view"]
+    assert {"wallet", "contact"} <= resources_for("carrier")
+    assert sorted(key for key in templates["Superuser"] if key.startswith("subscription.")) == [
+        "subscription.create",
+        "subscription.delete",
+        "subscription.update",
+        "subscription.view",
+    ]
     assert not {key for name in ("Manager", "Operator") for key in templates[name] if key.startswith("subscription.")}
+
+
+def test_a_broker_from_the_app_seeds_roles_that_call_and_one_from_the_console_keeps_its_roles():
+    console, app = templates_for("broker"), templates_for("broker", from_app=True)
+    calls = {"telephony.view", "telephony.update", "phone_number.view"}
+
+    assert console is TEMPLATES
+    assert {name for name, role in console.items() if calls <= role.keys()} == {"Superuser"}
+    assert {name for name, role in app.items() if calls <= role.keys()} == {
+        "Superuser",
+        "Manager",
+        "Sales Agent",
+        "Dispatcher",
+        "Support Agent",
+    }
+    assert app["Manager"]["conversation.create"] == "all"
+    assert app["Accountant"].keys() - console["Accountant"].keys() == {"contact.view"}, "it reads the book, no lines"
+    assert templates_for("carrier", from_app=True) is CARRIER_TEMPLATES
+
+
+def test_every_role_of_a_broker_from_the_app_keeps_the_contact_book_once_the_plan_takes_customers_away():
+    app, console = templates_for("broker", from_app=True), templates_for("broker")
+    os_only = set(FEATURES["os"].resources)
+    without_os = {name: {key for key in role if key.split(".")[0] not in os_only} for name, role in app.items()}
+
+    assert {name for name, keys in without_os.items() if "contact.view" in keys} == set(app)
+    assert {name for name, keys in without_os.items() if {"contact.create", "contact.update"} <= keys} == {
+        "Superuser",
+        "Manager",
+        "Sales Agent",
+        "Dispatcher",
+        "Support Agent",
+    }
+    assert "contact.delete" not in app["Manager"], "only the Superuser deletes, as with customers"
+    assert {name for name, role in console.items() if "contact.view" in role} == {"Superuser"}
 
 
 def test_a_carrier_operator_calls_and_texts_but_runs_nothing():
@@ -79,6 +138,16 @@ def test_a_carrier_manager_sees_every_conversation_and_changes_no_users():
     }
 
 
+def test_every_carrier_role_finds_and_adds_contacts_and_only_the_superuser_deletes_them():
+    templates = templates_for("carrier")
+
+    assert {name: sorted(key for key in role if key.startswith("contact.")) for name, role in templates.items()} == {
+        "Superuser": ["contact.create", "contact.delete", "contact.update", "contact.view"],
+        "Manager": ["contact.create", "contact.update", "contact.view"],
+        "Operator": ["contact.create", "contact.view"],
+    }
+
+
 def test_phone_editor_shows_only_phone_resources():
     assert _keys(build_permission_groups({}, "phone")) == PHONE_RESOURCES
 
@@ -87,8 +156,8 @@ def test_unfiltered_groups_keep_the_full_catalog():
     assert _keys(build_permission_groups({})) == RESOURCE_SET
 
 
-def test_broker_superuser_gains_nothing_phone_only():
-    assert not {key.split(".")[0] for key in SUPERUSER} & PHONE_ONLY_RESOURCES
+def test_broker_superuser_holds_contacts_and_the_wallet():
+    assert {"contact", "wallet"} <= {key.split(".")[0] for key in SUPERUSER}
 
 
 def test_templates_follow_org_type():
@@ -140,3 +209,10 @@ def test_allowed_org_types_lets_legacy_token_through(monkeypatch):
 def test_empty_allowed_org_types_is_off(monkeypatch):
     monkeypatch.setenv("ALLOWED_ORG_TYPES", "")
     assert asyncio.run(auth_dep.get_current_user(_token(ot="phone"))).org_type == "phone"
+
+
+def test_the_token_says_what_the_person_does_and_old_tokens_say_nothing(monkeypatch):
+    monkeypatch.delenv("ALLOWED_ORG_TYPES", raising=False)
+
+    assert asyncio.run(auth_dep.get_current_user(_token(ut="driver"))).user_type == "driver"
+    assert asyncio.run(auth_dep.get_current_user(_token())).user_type is None

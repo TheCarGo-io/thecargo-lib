@@ -86,25 +86,28 @@ RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
 
 PHONE_ORG_TYPE: Final[str] = "phone"
 
-PHONE_ONLY_RESOURCES: Final[frozenset[str]] = frozenset({"contact", "wallet", "subscription"})
-
-PHONE_RESOURCES: Final[frozenset[str]] = PHONE_ONLY_RESOURCES | {
-    "analytics",
-    "conversation",
-    "template",
-    "campaign",
-    "notification",
-    "sip_credential",
-    "power_dialer",
-    "telephony",
-    "phone_number",
-    "tag",
-    "user",
-    "team",
-    "role",
-    "company_info",
-    "audit",
-}
+PHONE_RESOURCES: Final[frozenset[str]] = frozenset(
+    {
+        "contact",
+        "wallet",
+        "subscription",
+        "analytics",
+        "conversation",
+        "template",
+        "campaign",
+        "notification",
+        "sip_credential",
+        "power_dialer",
+        "telephony",
+        "phone_number",
+        "tag",
+        "user",
+        "team",
+        "role",
+        "company_info",
+        "audit",
+    }
+)
 
 
 CARRIER_ORG_TYPE: Final[str] = "carrier"
@@ -113,9 +116,12 @@ CARRIER_ORG_TYPE: Final[str] = "carrier"
 # by operating company inside the CRM itself, so the only permissions a carrier
 # role carries are the ones the shared services check: talking to drivers, and
 # running the organization. `subscription` is there to be read: a carrier pays
-# us directly, so its plan is changed and marked paid on our side.
+# us directly, so its plan is changed and marked paid on our side. `contact`
+# and `wallet` are there for a carrier that signed itself up in the app.
 CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
     {
+        "contact",
+        "wallet",
         "conversation",
         "template",
         "campaign",
@@ -143,7 +149,7 @@ def resources_for(org_type: str | None) -> frozenset[str]:
         return PHONE_RESOURCES
     if org_type == CARRIER_ORG_TYPE:
         return CARRIER_RESOURCES
-    return RESOURCE_SET - PHONE_ONLY_RESOURCES
+    return RESOURCE_SET
 
 
 def actions_for(resource: str) -> tuple[str, ...]:

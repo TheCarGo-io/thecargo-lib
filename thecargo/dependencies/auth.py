@@ -5,6 +5,9 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from thecargo.context import set_active_company
+from thecargo.exceptions import ForbiddenException
+
 security = HTTPBearer()
 
 DEFAULT_ORG_TYPE = "broker"
@@ -35,6 +38,10 @@ class TokenPayload:
     # a lead release day) cut on this one even when the viewer set a personal tz.
     otz: str | None = None
     org_type: str = DEFAULT_ORG_TYPE
+    company_id: UUID | None = None
+    # What the person said they do at signup: broker, dispatcher or driver.
+    # Shapes what they are offered, never what they may do.
+    user_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,10 +125,13 @@ async def get_current_user(
         tz=payload.get("tz"),
         otz=payload.get("otz"),
         org_type=payload.get("ot") or DEFAULT_ORG_TYPE,
+        company_id=UUID(payload["cid"]) if payload.get("cid") else None,
+        user_type=payload.get("ut"),
     )
 
     _enforce_org_type(user)
     await _enforce_token_state(user, payload.get("iat"))
+    set_active_company(user.company_id)
 
     return user
 
@@ -223,6 +233,20 @@ async def get_org_id(user: TokenPayload = Depends(get_current_user)) -> UUID:
 
 async def get_org_type(user: TokenPayload = Depends(get_current_user)) -> str:
     return user.org_type
+
+
+async def get_company_id(user: TokenPayload = Depends(get_current_user)) -> UUID | None:
+    return user.company_id
+
+
+async def organization_only(user: TokenPayload = Depends(get_current_user)) -> None:
+    """Refuse a change to something every company of the organization shares."""
+    if user.company_id is not None:
+        raise ForbiddenException(
+            code="ORGANIZATION_ONLY",
+            key="auth.organization_only",
+            message="This belongs to the whole organization; switch out of the company to change it",
+        )
 
 
 class Requires:

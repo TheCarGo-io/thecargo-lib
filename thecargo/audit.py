@@ -12,7 +12,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import raiseload
 from sqlalchemy.orm.base import NO_VALUE
 
-from thecargo.context import get_audit_context
+from thecargo.context import ANY_COMPANY, active_company, get_audit_context
 from thecargo.events import publisher
 from thecargo.utils.timezone import utc_now
 
@@ -140,6 +140,14 @@ def _resolve_org_id(explicit: Any, ctx) -> str | None:
     return str(org) if org is not None else None
 
 
+def _resolve_company_id(obj: Any = None) -> str | None:
+    company_id = getattr(obj, "company_id", None)
+    if company_id is None:
+        ambient = active_company()
+        company_id = None if ambient is ANY_COMPANY else ambient
+    return str(company_id) if company_id is not None else None
+
+
 def _root_of(obj: "Auditable", resource: str, resource_id: str | None) -> tuple[str, str | None]:
     try:
         root = obj.__audit_root__()
@@ -252,6 +260,7 @@ def _build_payload(
         "audit_id": str(uuid4()),
         "service": _SERVICE_NAME or "unknown",
         "organization_id": _resolve_org_id(org_id, ctx),
+        "company_id": _resolve_company_id(obj),
         "user": _user_obj(ctx),
         "resource": resource,
         "resource_id": resource_id,
@@ -297,6 +306,7 @@ async def emit_audit_event(
         "audit_id": str(uuid4()),
         "service": service or _SERVICE_NAME or "unknown",
         "organization_id": _resolve_org_id(organization_id, ctx),
+        "company_id": _resolve_company_id(),
         "user": _user_obj(ctx),
         "resource": resource,
         "resource_id": resource_id,

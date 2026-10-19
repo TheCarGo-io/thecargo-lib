@@ -6,8 +6,10 @@ intersected with the resources the organization's features unlock. Keys with
 no resources (``recording``, ``ai``) and the ``included.*`` limits are read
 where there is no token, through :func:`entitlements`.
 
-A resource no feature mentions is never gated: brokers, admin screens and the
-wallet stay exactly as the role says.
+A resource no feature mentions is never gated: admin screens, the wallet and
+the subscription stay exactly as the role says. ``os`` gates the broker
+workspace, so a broker that signed itself up in the app works its phone only
+until an override or a plan carries ``os``.
 """
 
 import json
@@ -47,6 +49,42 @@ FEATURES: Final[dict[str, Feature]] = {
                 "notification",
             ),
         ),
+        Feature(
+            "os",
+            "Broker workspace",
+            (
+                "shipment",
+                "lead",
+                "quote",
+                "order",
+                "customer",
+                "carrier",
+                "task",
+                "loadboard",
+                "contract",
+                "distribution",
+                "provider",
+                "target",
+                "lead_parsing",
+                "order_feedback",
+                "shipment_reason",
+                "payment",
+                "refund",
+                "commission",
+                "payroll",
+                "payment_method",
+                "credit_card",
+                "toolbar",
+                "toolbar_note",
+                "toolbar_task",
+                "toolbar_file",
+                "toolbar_contract",
+                "toolbar_sms",
+                "toolbar_email",
+                "toolbar_payment",
+                "toolbar_activity",
+            ),
+        ),
         Feature("recording", "Call recording"),
         Feature("ai", "AI transcripts, summaries and copilot"),
         Feature("ivr", "IVR, queues and ring groups"),
@@ -61,6 +99,8 @@ FEATURES: Final[dict[str, Feature]] = {
 LIMITS: Final[dict[str, str]] = {
     "included.voice_minutes": "Voice minutes per user per month",
     "included.sms_daily": "Texts per user per day",
+    "included.voice_minutes_daily": "Call minutes per organization per day",
+    "included.ai_minutes_daily": "AI minutes per organization per day",
     "included.numbers": "Phone numbers per user",
     "included.ai_agent_minutes": "AI agent minutes per organization per month",
 }
@@ -90,6 +130,7 @@ class Entitlements:
     plan: str
     status: str
     features: dict[str, int | None]
+    payment_model: str | None = None
 
     @property
     def active(self) -> bool:
@@ -144,7 +185,9 @@ async def entitlements(organization_id: UUID | str) -> Entitlements:
         raw = json.dumps(data)
         await cache_set(entitlements_key(organization_id), raw, ttl=600, serialize=str)
     data = json.loads(raw)
-    return Entitlements(plan=data["plan"], status=data["status"], features=data["features"])
+    return Entitlements(
+        plan=data["plan"], status=data["status"], features=data["features"], payment_model=data.get("payment_model")
+    )
 
 
 async def has_feature(organization_id: UUID | str, key: str) -> bool:

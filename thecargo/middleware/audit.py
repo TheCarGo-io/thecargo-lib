@@ -4,7 +4,7 @@ import jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from thecargo.context import AuditContext, AuditUser, set_audit_context
+from thecargo.context import ANY_COMPANY, AuditContext, AuditUser, set_active_company, set_audit_context
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -71,6 +71,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 pass
 
         set_audit_context(ctx)
+        set_active_company(ANY_COMPANY)
         response = await call_next(request)
         response.headers["X-Request-ID"] = str(request_id)
         return response

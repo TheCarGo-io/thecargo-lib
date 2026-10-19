@@ -53,6 +53,12 @@ def test_validate_iana_rejects_non_iana(bad):
         validate_iana(bad)
 
 
+@pytest.mark.parametrize("bad", ["America/Argentina", "America/" + "x" * 300])
+def test_validate_iana_rejects_a_name_the_filesystem_chokes_on(bad):
+    with pytest.raises(ValueError):
+        validate_iana(bad)
+
+
 def test_day_bounds_are_half_open_local_midnights():
     start, end = day_bounds_utc(date(2026, 8, 5), NY)
     assert start == datetime(2026, 8, 5, 4, 0, tzinfo=UTC)

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -15,6 +16,7 @@ async def start_consumer(
     handler: Callable[[str, dict[str, Any]], Any],
     exchange: str = "thecargo.events",
     requeue_failed: bool = False,
+    requeue_delay: float = 0,
     prefetch_count: int = 10,
     arguments: dict[str, Any] | None = None,
 ):
@@ -24,7 +26,9 @@ async def start_consumer(
     for queues that would rather see an event twice than lose it: a handler that
     raises sends the message back once, and a second failure drops it, so a
     message the handler can never process cannot spin forever. Leave it off for
-    handlers whose work is not safe to repeat.
+    handlers whose work is not safe to repeat. `requeue_delay` holds the message
+    that many seconds before sending it back, so the second try does not land in
+    the same database or network blip that failed the first.
 
     `arguments` are passed to the queue declaration (`x-message-ttl`,
     `x-max-length`, ...) for queues whose messages go stale fast; a queue that
@@ -48,6 +52,8 @@ async def start_consumer(
         except Exception:
             logger.exception("Failed to process message: %s", message.routing_key)
             if requeue_failed and not message.redelivered:
+                if requeue_delay:
+                    await asyncio.sleep(requeue_delay)
                 await message.reject(requeue=True)
                 return
             await message.ack()
