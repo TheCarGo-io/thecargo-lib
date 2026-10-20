@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from http import HTTPStatus
 from pathlib import Path
 
 import httpx
@@ -94,6 +95,22 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
     return JSONResponse(status_code=exc.status_code, content=envelope)
 
 
+def _is_default_detail(exc: HTTPException) -> bool:
+    """Whether the raiser said nothing and FastAPI filled the phrase in.
+
+    ``HTTPException(409)`` gets ``detail="Conflict"`` from the status phrase.
+    ``HTTPException(409, "This invoice is already settled")`` does not. The
+    two need different treatment and the phrase is the only thing telling
+    them apart.
+    """
+    if not isinstance(exc.detail, str):
+        return False
+    try:
+        return exc.detail == HTTPStatus(exc.status_code).phrase
+    except ValueError:
+        return False
+
+
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     lang = get_language(request)
     code = f"HTTP_{exc.status_code}"
@@ -105,7 +122,18 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     else:
         fallback = exc.detail if isinstance(exc.detail, str) else "Error"
         params = {}
-    envelope = _envelope(code, key, lang, params, fallback)
+
+    # A generic translation is what to say when the raiser said nothing —
+    # not something to say over the top of them. `common.http_409` is
+    # "Conflict", so translating unconditionally turned "This invoice is
+    # already settled — there is nothing to chase" into a word, and every
+    # 400/404/409/500/502 on the platform lost the one sentence that told
+    # the user what to do. 422 escaped only because the catalogue happens
+    # to have no entry for it.
+    if _is_default_detail(exc):
+        envelope = _envelope(code, key, lang, params, fallback)
+    else:
+        envelope = {"code": code, "key": key, "message": fallback, "params": params, "detail": fallback}
     return JSONResponse(status_code=exc.status_code, content=envelope)
 
 
