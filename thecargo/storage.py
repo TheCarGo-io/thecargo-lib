@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from functools import wraps
 from typing import Any
@@ -120,10 +121,14 @@ def init_storage(
 def _ensure_bucket():
     if _client is None:
         return
+    threading.Thread(target=_check_bucket, args=(_client, _bucket), name="r2-bucket-check", daemon=True).start()
+
+
+def _check_bucket(client: Any, bucket: str) -> None:
     try:
-        _client.head_bucket(Bucket=_bucket)
-    except ClientError as e:
-        logger.warning("R2 bucket not reachable (%s): %s", _bucket, e)
+        client.head_bucket(Bucket=bucket)
+    except Exception as e:
+        logger.warning("R2 bucket not reachable (%s): %s", bucket, e)
 
 
 @_retry

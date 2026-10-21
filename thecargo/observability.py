@@ -120,4 +120,8 @@ def install_celery_signals() -> bool:
         init_sentry()
 
     worker_process_init.connect(_init_in_worker, weak=False)
+
+    from thecargo.metrics import install_celery_metrics
+
+    install_celery_metrics()
     return True

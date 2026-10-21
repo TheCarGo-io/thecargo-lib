@@ -1,10 +1,19 @@
 from uuid import UUID, uuid4
 
 import jwt
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from thecargo.context import ANY_COMPANY, AuditContext, AuditUser, set_active_company, set_audit_context
+from thecargo.context import (
+    ANY_COMPANY,
+    AuditContext,
+    AuditUser,
+    active_company,
+    get_audit_context,
+    set_active_company,
+    set_audit_context,
+)
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -35,13 +44,18 @@ def _resolve_request_id(incoming: str | None) -> UUID:
         return uuid4()
 
 
-class AuditMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, jwt_secret: str, jwt_algorithm: str = "HS256"):
-        super().__init__(app)
+class AuditMiddleware:
+    def __init__(self, app: ASGIApp, jwt_secret: str, jwt_algorithm: str = "HS256"):
+        self.app = app
         self.jwt_secret = jwt_secret
         self.jwt_algorithm = jwt_algorithm
 
-    async def dispatch(self, request: Request, call_next):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
         request_id = _resolve_request_id(request.headers.get("x-request-id"))
 
         # Some bots and SDKs ship multi-kilobyte User-Agent strings; the
@@ -70,8 +84,17 @@ class AuditMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
+        previous_ctx, previous_company = get_audit_context(), active_company()
         set_audit_context(ctx)
         set_active_company(ANY_COMPANY)
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = str(request_id)
-        return response
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["X-Request-ID"] = str(request_id)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        finally:
+            set_audit_context(previous_ctx)
+            set_active_company(previous_company)
