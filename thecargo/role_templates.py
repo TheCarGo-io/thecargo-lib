@@ -69,6 +69,7 @@ MANAGER: Final[dict[str, str]] = {
         for a in ("view", "create", "update", "delete")
     },
     "toolbar_activity.view": "all",
+    "thecargo_mail.create": "all",
 }
 
 SALES_AGENT: Final[dict[str, str]] = {
@@ -94,6 +95,7 @@ SALES_AGENT: Final[dict[str, str]] = {
         for a in ("view", "create", "update", "delete")
     },
     "toolbar_activity.view": "own",
+    "thecargo_mail.create": "all",
 }
 
 DISPATCHER: Final[dict[str, str]] = {
@@ -131,6 +133,7 @@ DISPATCHER: Final[dict[str, str]] = {
         for a in ("view", "create", "update", "delete")
     },
     "toolbar_activity.view": "all",
+    "thecargo_mail.create": "all",
 }
 
 ACCOUNTANT: Final[dict[str, str]] = {
@@ -149,6 +152,7 @@ ACCOUNTANT: Final[dict[str, str]] = {
     "toolbar_file.view": "all",
     **{f"toolbar_payment.{a}": "all" for a in ACTIONS},
     "toolbar_activity.view": "all",
+    "thecargo_mail.create": "all",
 }
 
 SUPPORT_AGENT: Final[dict[str, str]] = {
@@ -171,6 +175,7 @@ SUPPORT_AGENT: Final[dict[str, str]] = {
         for a in ("view", "create", "update", "delete")
     },
     "toolbar_activity.view": "own",
+    "thecargo_mail.create": "all",
 }
 
 TEMPLATES: Final[dict[str, dict[str, str]]] = {
@@ -230,6 +235,7 @@ PHONE_ADMIN: Final[dict[str, str]] = {
     "telephony.update": "all",
     "company_info.view": "all",
     "company_info.update": "all",
+    "thecargo_mail.create": "all",
 }
 
 PHONE_AGENT: Final[dict[str, str]] = {
@@ -252,6 +258,7 @@ PHONE_AGENT: Final[dict[str, str]] = {
     "analytics.view": "own",
     "team.view": "all",
     "company_info.view": "all",
+    "thecargo_mail.create": "all",
 }
 
 PHONE_OWNER_ROLE_NAME: Final[str] = "Owner"
@@ -289,6 +296,7 @@ CARRIER_MANAGER: Final[dict[str, str]] = {
         )
     },
     "telephony.update": "all",
+    "thecargo_mail.create": "all",
 }
 
 # Calls and texts drivers. Sees their own conversations and numbers, reads
@@ -314,6 +322,7 @@ CARRIER_OPERATOR: Final[dict[str, str]] = {
     "analytics.view": "own",
     "team.view": "all",
     "company_info.view": "all",
+    "thecargo_mail.create": "all",
 }
 
 CARRIER_MANAGER_ROLE_NAME: Final[str] = "Manager"
