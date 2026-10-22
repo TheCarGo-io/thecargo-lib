@@ -83,6 +83,7 @@ FEATURES: Final[dict[str, Feature]] = {
                 "toolbar_email",
                 "toolbar_payment",
                 "toolbar_activity",
+                "report",
             ),
         ),
         Feature("recording", "Call recording"),
