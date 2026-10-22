@@ -15,6 +15,7 @@ def make_engine(
     max_overflow: int = 10,
     pool_timeout: int = DEFAULT_POOL_TIMEOUT,
     pool_recycle: int = 300,
+    prepared_statement_cache_size: int = 0,
     echo: bool = False,
 ) -> AsyncEngine:
     """A pgbouncer-safe engine that fails fast when the pool is drained.
@@ -22,6 +23,16 @@ def make_engine(
     SQLAlchemy's default pool_timeout of 30s turns pool exhaustion into
     30-second stalls that surface as user-facing 500s; a short timeout makes
     the exhaustion visible immediately instead of queueing requests behind it.
+
+    There is no pre-ping: under asyncpg it sends BEGIN, a ping and ROLLBACK on
+    every checkout, three extra round trips per request. ``pool_recycle``
+    keeps connections younger than any idle cutoff between here and pgbouncer,
+    and a dropped connection invalidates the pool on its first error.
+
+    ``prepared_statement_cache_size`` stays 0 unless the pgbouncer in front
+    tracks protocol-level prepared statements (``max_prepared_statements``);
+    with it, each statement is parsed and planned once per server connection
+    instead of on every execution.
     """
     return create_async_engine(
         database_url,
@@ -29,11 +40,10 @@ def make_engine(
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
-        pool_pre_ping=True,
         pool_recycle=pool_recycle,
         connect_args={
             "statement_cache_size": 0,
-            "prepared_statement_cache_size": 0,
+            "prepared_statement_cache_size": prepared_statement_cache_size,
         },
     )
 
