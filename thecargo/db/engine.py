@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import wraps
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 DEFAULT_POOL_TIMEOUT = 5
@@ -56,6 +56,24 @@ _REQUEST_GUARDS = text(
 
 async def apply_request_guards(session: AsyncSession, *, statement: str = "30s", idle: str = "15s") -> None:
     await session.execute(_REQUEST_GUARDS, {"statement": statement, "idle": idle})
+
+
+def guard_transactions(session: AsyncSession, *, statement: str = "30s", idle: str = "15s") -> None:
+    """Bound every transaction the session opens, starting from its first statement.
+
+    Applying the guards up front opens the transaction before the request needs the
+    database, and under pgbouncer transaction pooling that pins a server connection
+    through every await in between: token checks, Redis cache reads, calls to other
+    services. A request answered from cache would hold one without running a query.
+    ``after_begin`` sets the timeouts on the transaction's own connection the moment it
+    starts, and again on every transaction that follows a commit.
+    """
+    params = {"statement": statement, "idle": idle}
+
+    def bound(_session, _transaction, connection) -> None:
+        connection.execute(_REQUEST_GUARDS, params)
+
+    event.listen(session.sync_session, "after_begin", bound)
 
 
 @asynccontextmanager
