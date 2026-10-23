@@ -70,6 +70,8 @@ MANAGER: Final[dict[str, str]] = {
     },
     "toolbar_activity.view": "all",
     "thecargo_mail.create": "all",
+    "report.view": "all",
+    "report.create": "all",
 }
 
 SALES_AGENT: Final[dict[str, str]] = {
@@ -96,6 +98,7 @@ SALES_AGENT: Final[dict[str, str]] = {
     },
     "toolbar_activity.view": "own",
     "thecargo_mail.create": "all",
+    "report.view": "all",
 }
 
 DISPATCHER: Final[dict[str, str]] = {
@@ -134,6 +137,8 @@ DISPATCHER: Final[dict[str, str]] = {
     },
     "toolbar_activity.view": "all",
     "thecargo_mail.create": "all",
+    "report.view": "all",
+    "report.create": "all",
 }
 
 ACCOUNTANT: Final[dict[str, str]] = {
@@ -151,8 +156,11 @@ ACCOUNTANT: Final[dict[str, str]] = {
     "toolbar_note.view": "all",
     "toolbar_file.view": "all",
     **{f"toolbar_payment.{a}": "all" for a in ACTIONS},
+    "payment.view": "all",
     "toolbar_activity.view": "all",
     "thecargo_mail.create": "all",
+    "report.view": "all",
+    "report.create": "all",
 }
 
 SUPPORT_AGENT: Final[dict[str, str]] = {
@@ -176,6 +184,8 @@ SUPPORT_AGENT: Final[dict[str, str]] = {
     },
     "toolbar_activity.view": "own",
     "thecargo_mail.create": "all",
+    "report.view": "all",
+    "report.create": "all",
 }
 
 TEMPLATES: Final[dict[str, dict[str, str]]] = {
