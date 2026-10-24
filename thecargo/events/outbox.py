@@ -8,6 +8,7 @@ from sqlalchemy import JSON, Integer, String, Text, delete, event, select, updat
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from thecargo.coalesce import Coalescer
 from thecargo.events import publisher
 from thecargo.models.base import BaseModel
 from thecargo.utils.timezone import utc_now
@@ -20,12 +21,15 @@ _INFLIGHT: set[asyncio.Task] = set()
 """Strong references to in-flight publishes.
 
 The event loop only holds weak references to tasks, so a task dropped here
-could be collected between the RabbitMQ publish and the mark-published write.
+could be collected between the RabbitMQ publish and queuing its mark.
 The row would stay pending and the relay would republish an event that had
 already gone out.
 """
 
+_MARKERS: dict[object, Coalescer] = {}
+
 RELAY_GRACE_SECONDS = 30
+MARK_DELAY_SECONDS = 1.0
 RELAY_BATCH = 200
 RELAY_MAX_ATTEMPTS = 10
 RECLAIM_AFTER_SECONDS = 300
@@ -70,36 +74,42 @@ def publish_event(db: AsyncSession, routing_key: str, payload: dict) -> None:
     db.sync_session.info.setdefault(_OUTBOX_KEY, []).append(row)
 
 
-async def _mark_published(session_factory, event_id) -> None:
-    async with session_factory() as session:
-        await session.execute(
-            update(OutboxEvent)
-            .where(OutboxEvent.id == event_id)
-            .values(status="published", published_at=utc_now(), attempts=OutboxEvent.attempts + 1)
-        )
-        await session.commit()
+async def _mark_published(session_factory, event_ids: list) -> None:
+    try:
+        async with session_factory() as session:
+            await session.execute(
+                update(OutboxEvent)
+                .where(OutboxEvent.id.in_(event_ids))
+                .values(status="published", published_at=utc_now(), attempts=OutboxEvent.attempts + 1)
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("outbox mark-published failed for %d rows (relay will republish them)", len(event_ids))
+
+
+def _marker(session_factory) -> Coalescer:
+    marker = _MARKERS.get(session_factory)
+    if marker is None:
+        marker = Coalescer(lambda event_ids: _mark_published(session_factory, event_ids), MARK_DELAY_SECONDS)
+        _MARKERS[session_factory] = marker
+    return marker
 
 
 async def _publish_one(session_factory, event_id, routing_key: str, payload: dict) -> None:
     """Publish one staged row now, instead of waiting out the relay's grace window.
 
-    Losing the mark after a successful delivery is not a lost event, it is a
-    duplicate one: the relay finds the row still pending and sends it again.
-    So the mark is shielded from cancellation, and a cancelled mark is logged
-    rather than swallowed — ``except Exception`` never sees ``CancelledError``.
+    The mark that keeps the relay from sending the row again is written with
+    every other mark of the next `MARK_DELAY_SECONDS`, well inside the grace
+    window. Losing the mark after a successful delivery is not a lost event, it
+    is a duplicate one: the relay finds the row still pending and sends it
+    again, and consumers drop the replay by its ``event_id``.
     """
     try:
         await _deliver(routing_key, payload, event_id)
     except Exception as exc:
         logger.warning("outbox immediate publish failed (relay will retry): %s %s", routing_key, exc)
         return
-    try:
-        await asyncio.shield(_mark_published(session_factory, event_id))
-    except asyncio.CancelledError:
-        logger.warning("outbox mark-published cancelled for %s (relay will republish it)", event_id)
-        raise
-    except Exception:
-        logger.exception("outbox mark-published failed for %s (relay will republish it)", event_id)
+    _marker(session_factory).add([event_id])
 
 
 def register_outbox_listeners(session_class, session_factory) -> None:
