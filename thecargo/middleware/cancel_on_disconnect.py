@@ -55,12 +55,15 @@ class CancelOnDisconnectMiddleware:
 
         pump_task = asyncio.create_task(pump())
         app_task = asyncio.create_task(self.app(scope, buffered_receive, tracking_send))
-        watch_task = asyncio.create_task(disconnected.wait())
 
         try:
-            done, _ = await asyncio.wait({app_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({app_task, pump_task}, return_when=asyncio.FIRST_COMPLETED)
             if app_task in done:
                 app_task.result()
+                return
+
+            if not disconnected.is_set():
+                await app_task
                 return
 
             if completed:
@@ -87,6 +90,5 @@ class CancelOnDisconnectMiddleware:
                 except Exception:
                     pass
         finally:
-            for task in (pump_task, watch_task):
-                if not task.done():
-                    task.cancel()
+            if not pump_task.done():
+                pump_task.cancel()

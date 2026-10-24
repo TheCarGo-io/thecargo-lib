@@ -13,6 +13,8 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from thecargo.jwt_once import decode_once
+
 log = logging.getLogger(__name__)
 
 SLIDING_WINDOW_SCRIPT = """
@@ -126,7 +128,7 @@ class RateLimitMiddleware:
         if not auth.startswith("Bearer "):
             return None
         try:
-            payload = jwt.decode(auth[7:], self.config.jwt_secret, algorithms=[self.config.jwt_algorithm])
+            payload = decode_once(scope, auth[7:], self.config.jwt_secret, self.config.jwt_algorithm)
         except jwt.PyJWTError:
             return None
         org_id = payload.get("org_id")
