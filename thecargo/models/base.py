@@ -12,7 +12,13 @@ class Base(DeclarativeBase):
 
 
 class BaseModel(Base):
+    """``eager_defaults`` reads ``updated_at``, which the database sets on every UPDATE, back through RETURNING.
+
+    Otherwise the ORM expires it after the flush and the next access costs another SELECT inside the write transaction.
+    """
+
     __abstract__ = True
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -31,6 +37,7 @@ class CompanyScoped:
 
 class ReferenceModel(Base):
     __abstract__ = True
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
