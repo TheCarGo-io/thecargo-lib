@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, String, event, func
+from sqlalchemy import DateTime, String, event, func, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -61,7 +61,15 @@ class NaiveDatetimeError(ValueError):
 
 
 def _enforce_column_contracts(mapper, connection, target) -> None:
+    """Reject over-long strings and naive datetimes before they reach the database.
+
+    A column the object never loaded (a deferred one) is not being written, so it is skipped: reading it to check
+    it would cost a SELECT inside the write's flush.
+    """
+    unloaded = inspect(target).unloaded
     for col in mapper.columns:
+        if col.key in unloaded:
+            continue
         col_type = col.type
         value = getattr(target, col.key, None)
         if isinstance(col_type, String):
