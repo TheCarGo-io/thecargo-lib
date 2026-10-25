@@ -17,6 +17,7 @@ def make_engine(
     pool_timeout: int = DEFAULT_POOL_TIMEOUT,
     pool_recycle: int = 300,
     prepared_statement_cache_size: int = 0,
+    command_timeout: float | None = None,
     echo: bool = False,
 ) -> AsyncEngine:
     """A pgbouncer-safe engine that fails fast when the pool is drained.
@@ -34,7 +35,17 @@ def make_engine(
     tracks protocol-level prepared statements (``max_prepared_statements``);
     with it, each statement is parsed and planned once per server connection
     instead of on every execution.
+
+    ``command_timeout`` cancels a statement from the client after that many seconds. It
+    bounds statements that run outside a transaction, where ``SET LOCAL`` has nothing to
+    attach to.
     """
+    connect_args = {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": prepared_statement_cache_size,
+    }
+    if command_timeout is not None:
+        connect_args["command_timeout"] = command_timeout
     return create_async_engine(
         database_url,
         echo=echo,
@@ -42,10 +53,7 @@ def make_engine(
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
         pool_recycle=pool_recycle,
-        connect_args={
-            "statement_cache_size": 0,
-            "prepared_statement_cache_size": prepared_statement_cache_size,
-        },
+        connect_args=connect_args,
     )
 
 
@@ -67,11 +75,14 @@ def guard_transactions(session: AsyncSession, *, statement: str = "30s", idle: s
     through every await in between: token checks, Redis cache reads, calls to other
     services. A request answered from cache would hold one without running a query.
     ``after_begin`` sets the timeouts on the transaction's own connection the moment it
-    starts, and again on every transaction that follows a commit.
+    starts, and again on every transaction that follows a commit. An autocommit
+    connection has no transaction to bound, so it is skipped.
     """
     params = {"statement": statement, "idle": idle}
 
     def bound(_session, _transaction, connection) -> None:
+        if connection.get_execution_options().get("isolation_level") == "AUTOCOMMIT":
+            return
         connection.execute(_REQUEST_GUARDS, params)
 
     event.listen(session.sync_session, "after_begin", bound)
