@@ -60,6 +60,8 @@ MANAGER: Final[dict[str, str]] = {
     "role.view": "all",
     "company_info.view": "all",
     "company_info.update": "all",
+    "integrations.view": "all",
+    "integrations.update": "all",
     "lead_parsing.view": "all",
     "lead_parsing.create": "all",
     "lead_parsing.update": "all",
@@ -245,6 +247,8 @@ PHONE_ADMIN: Final[dict[str, str]] = {
     "telephony.update": "all",
     "company_info.view": "all",
     "company_info.update": "all",
+    "integrations.view": "all",
+    "integrations.update": "all",
     "thecargo_mail.create": "all",
 }
 
