@@ -74,6 +74,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "analytics",
     "thecargo_mail",
     "report",
+    "integrations",
 )
 
 RESOURCE_SET: Final[frozenset[str]] = frozenset(RESOURCES)
@@ -85,6 +86,7 @@ RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     "telephony": ("view",),
     "thecargo_mail": ("create",),
     "report": ("view", "create"),
+    "integrations": ("view", "update"),
 }
 
 
@@ -111,6 +113,7 @@ PHONE_RESOURCES: Final[frozenset[str]] = frozenset(
         "company_info",
         "audit",
         "thecargo_mail",
+        "integrations",
     }
 )
 
@@ -146,6 +149,7 @@ CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
         "audit",
         "subscription",
         "thecargo_mail",
+        "integrations",
     }
 )
 
@@ -257,6 +261,7 @@ GROUPS: Final[list[dict]] = [
             {"key": "team", "label": "Teams"},
             {"key": "role", "label": "Roles"},
             {"key": "company_info", "label": "Company Info"},
+            {"key": "integrations", "label": "Integrations"},
             {"key": "audit", "label": "Audit"},
         ],
     },
