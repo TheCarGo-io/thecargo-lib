@@ -4,6 +4,7 @@ from functools import wraps
 
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from starlette.requests import HTTPConnection
 
 DEFAULT_POOL_TIMEOUT = 5
 
@@ -16,6 +17,7 @@ def make_engine(
     pool_timeout: int = DEFAULT_POOL_TIMEOUT,
     pool_recycle: int = 300,
     prepared_statement_cache_size: int = 0,
+    command_timeout: float | None = None,
     echo: bool = False,
 ) -> AsyncEngine:
     """A pgbouncer-safe engine that fails fast when the pool is drained.
@@ -33,7 +35,17 @@ def make_engine(
     tracks protocol-level prepared statements (``max_prepared_statements``);
     with it, each statement is parsed and planned once per server connection
     instead of on every execution.
+
+    ``command_timeout`` cancels a statement from the client after that many seconds. It
+    bounds statements that run outside a transaction, where ``SET LOCAL`` has nothing to
+    attach to.
     """
+    connect_args = {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": prepared_statement_cache_size,
+    }
+    if command_timeout is not None:
+        connect_args["command_timeout"] = command_timeout
     return create_async_engine(
         database_url,
         echo=echo,
@@ -41,10 +53,7 @@ def make_engine(
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
         pool_recycle=pool_recycle,
-        connect_args={
-            "statement_cache_size": 0,
-            "prepared_statement_cache_size": prepared_statement_cache_size,
-        },
+        connect_args=connect_args,
     )
 
 
@@ -66,14 +75,63 @@ def guard_transactions(session: AsyncSession, *, statement: str = "30s", idle: s
     through every await in between: token checks, Redis cache reads, calls to other
     services. A request answered from cache would hold one without running a query.
     ``after_begin`` sets the timeouts on the transaction's own connection the moment it
-    starts, and again on every transaction that follows a commit.
+    starts, and again on every transaction that follows a commit. An autocommit
+    connection has no transaction to bound, so it is skipped.
     """
     params = {"statement": statement, "idle": idle}
 
     def bound(_session, _transaction, connection) -> None:
+        if connection.get_execution_options().get("isolation_level") == "AUTOCOMMIT":
+            return
         connection.execute(_REQUEST_GUARDS, params)
 
     event.listen(session.sync_session, "after_begin", bound)
+
+
+def read_only(endpoint):
+    """Mark a route that only reads, so its request session runs without a transaction.
+
+    A request session commits when the response has been sent, and under pgbouncer
+    transaction pooling its server connection stays pinned from the first query until
+    then: through every await between queries, the ORM loading, the serialization and
+    the send. Measured on the GCP stack, a pinned connection spent about 70% of that
+    time idle in transaction even at normal load, and once the App node ran out of CPU
+    the pool drained into query waits and pool timeouts. An autocommit session hands the
+    server connection back after every statement. Each statement already reads its own
+    snapshot under READ COMMITTED, so a read loses nothing by it. The request guards'
+    statement_timeout needs a transaction and does not apply here; pgbouncer's
+    query_timeout still bounds every statement.
+    """
+    endpoint.__read_only__ = True
+    return endpoint
+
+
+def is_read_only(conn: HTTPConnection | None) -> bool:
+    route = conn.scope.get("route") if conn is not None else None
+    return getattr(getattr(route, "endpoint", None), "__read_only__", False)
+
+
+def forbid_writes(session: AsyncSession) -> None:
+    """Fail a write on a read-only session: under autocommit it would land one statement at a time."""
+
+    def flush(sync_session, _flush_context, _instances) -> None:
+        if sync_session.new or sync_session.deleted or any(sync_session.is_modified(o) for o in sync_session.dirty):
+            raise RuntimeError("read-only request tried to write")
+
+    def execute(state) -> None:
+        if state.is_insert or state.is_update or state.is_delete:
+            raise RuntimeError("read-only request tried to write")
+
+    event.listen(session.sync_session, "before_flush", flush)
+    event.listen(session.sync_session, "do_orm_execute", execute)
+
+
+@asynccontextmanager
+async def read_only_session(maker: async_sessionmaker) -> AsyncIterator[AsyncSession]:
+    async with maker() as session:
+        await session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        forbid_writes(session)
+        yield session
 
 
 @asynccontextmanager

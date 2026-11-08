@@ -12,6 +12,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import raiseload
 from sqlalchemy.orm.base import NO_VALUE
 
+from thecargo.coalesce import Coalescer
 from thecargo.context import ANY_COMPANY, active_company, get_audit_context
 from thecargo.events import publisher
 from thecargo.utils.timezone import utc_now
@@ -30,6 +31,8 @@ _SENSITIVE_SUFFIXES = (
 )
 _MAX_VALUE_LEN = 5000
 _PENDING_KEY = "_thecargo_audit_pending"
+RESOLVE_DELAY_SECONDS = 1.0
+_RESOLVERS: dict[object, Coalescer] = {}
 
 
 def _is_sensitive(column_key: str) -> bool:
@@ -390,6 +393,14 @@ async def _resolve_and_publish(session_maker, staged: list[dict[str, Any]]) -> N
         await _publish_one(payload)
 
 
+def _resolver(session_maker) -> Coalescer:
+    resolver = _RESOLVERS.get(session_maker)
+    if resolver is None:
+        resolver = Coalescer(lambda staged: _resolve_and_publish(session_maker, staged), RESOLVE_DELAY_SECONDS)
+        _RESOLVERS[session_maker] = resolver
+    return resolver
+
+
 def register_audit_listeners(session_class, session_maker=None) -> None:
 
     @event.listens_for(session_class, "before_flush")
@@ -424,7 +435,10 @@ def register_audit_listeners(session_class, session_maker=None) -> None:
                 len(staged),
             )
             return
-        loop.create_task(_resolve_and_publish(session_maker, staged))
+        if session_maker is None:
+            loop.create_task(_resolve_and_publish(None, staged))
+            return
+        _resolver(session_maker).add(staged)
 
     @event.listens_for(session_class, "after_rollback")
     def _drop_on_rollback(session):

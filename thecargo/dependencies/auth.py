@@ -4,9 +4,11 @@ from uuid import UUID
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
 
 from thecargo.context import set_active_company
 from thecargo.exceptions import ForbiddenException
+from thecargo.jwt_once import decode_once
 
 security = HTTPBearer()
 
@@ -103,9 +105,10 @@ def _get_secret_key():
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    conn: HTTPConnection = None,
 ) -> TokenPayload:
     try:
-        payload = jwt.decode(credentials.credentials, _get_secret_key(), algorithms=["HS256"])
+        payload = decode_once(conn.scope if conn is not None else None, credentials.credentials, _get_secret_key())
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 

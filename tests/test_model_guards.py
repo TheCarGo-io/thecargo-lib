@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import String, create_engine
+from sqlalchemy import String, Text, create_engine, inspect
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from thecargo.models.base import BaseModel, FieldTooLongError, NaiveDatetimeError
+from thecargo.models.base import Base, BaseModel, FieldTooLongError, NaiveDatetimeError
 
 
 class GuardedRow(BaseModel):
@@ -48,3 +48,24 @@ def test_string_length_guard_still_enforced(session):
     session.add(GuardedRow(name="toolong"))
     with pytest.raises(FieldTooLongError):
         session.flush()
+
+
+class NotedRow(Base):
+    __tablename__ = "noted_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(20), default=None)
+    notes: Mapped[str | None] = mapped_column(Text, deferred=True, deferred_raiseload=True)
+
+
+def test_an_unloaded_deferred_column_is_not_read_to_be_checked():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[NotedRow.__table__])
+    with Session(engine) as s:
+        s.add(NotedRow(id=1, name="a", notes="kept by the database"))
+        s.commit()
+    with Session(engine) as s:
+        row = s.get(NotedRow, 1)
+        row.name = "b"
+        s.flush()
+        assert "notes" in inspect(row).unloaded

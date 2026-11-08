@@ -1,6 +1,5 @@
 from uuid import UUID, uuid4
 
-import jwt
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -14,6 +13,7 @@ from thecargo.context import (
     set_active_company,
     set_audit_context,
 )
+from thecargo.jwt_once import decode_once
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -71,7 +71,7 @@ class AuditMiddleware:
         auth = request.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             try:
-                payload = jwt.decode(auth[7:], self.jwt_secret, algorithms=[self.jwt_algorithm])
+                payload = decode_once(scope, auth[7:], self.jwt_secret, self.jwt_algorithm)
                 first_name, last_name = _names(payload)
                 ctx.user = AuditUser(
                     id=UUID(payload["user_id"]) if payload.get("user_id") else None,
