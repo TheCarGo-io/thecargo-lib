@@ -54,3 +54,43 @@ def test_cancellation_chain_tolerates_cycles():
     a.__context__ = b
     b.__context__ = a
     assert _is_cancellation(a) is False
+
+
+def test_the_ai_agent_integration_stays_off(monkeypatch):
+    import sys
+    import types
+
+    import sentry_sdk
+
+    from thecargo import observability
+
+    class PydanticAIIntegration:
+        pass
+
+    module = types.ModuleType("sentry_sdk.integrations.pydantic_ai")
+    module.PydanticAIIntegration = PydanticAIIntegration
+    seen = {}
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.pydantic_ai", module)
+    monkeypatch.setattr(sentry_sdk, "init", lambda **options: seen.update(options))
+    monkeypatch.setenv("SENTRY_DSN", "https://key@example.invalid/1")
+    monkeypatch.setattr(observability, "_initialized", False)
+
+    assert observability.init_sentry()
+    assert [type(off) for off in seen["disabled_integrations"]] == [PydanticAIIntegration]
+
+
+def test_a_service_without_the_ai_agent_library_starts_error_tracking_as_before(monkeypatch):
+    import sys
+
+    import sentry_sdk
+
+    from thecargo import observability
+
+    seen = {}
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.pydantic_ai", None)
+    monkeypatch.setattr(sentry_sdk, "init", lambda **options: seen.update(options))
+    monkeypatch.setenv("SENTRY_DSN", "https://key@example.invalid/1")
+    monkeypatch.setattr(observability, "_initialized", False)
+
+    assert observability.init_sentry()
+    assert "disabled_integrations" not in seen
