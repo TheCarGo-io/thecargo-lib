@@ -38,6 +38,14 @@ def init_sentry() -> bool:
     except Exception:
         pass
 
+    disabled = []
+    try:
+        from sentry_sdk.integrations.pydantic_ai import PydanticAIIntegration
+
+        disabled.append(PydanticAIIntegration())
+    except Exception:
+        pass
+
     service = os.environ.get("SERVICE_NAME", "unknown")
     environment = os.environ.get("ENVIRONMENT") or os.environ.get("ENV") or "production"
 
@@ -47,6 +55,7 @@ def init_sentry() -> bool:
         server_name=service,
         release=os.environ.get("RELEASE_SHA") or None,
         integrations=integrations,
+        **({"disabled_integrations": disabled} if disabled else {}),
         traces_sample_rate=0.0,
         send_default_pii=False,
         max_request_body_size="small",
