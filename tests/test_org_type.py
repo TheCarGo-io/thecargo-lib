@@ -166,6 +166,14 @@ def test_templates_follow_org_type():
     assert templates_for("phone") is PHONE_TEMPLATES
 
 
+def test_recording_download_is_offered_to_every_kind_of_organization():
+    for org_type in (None, "phone", "carrier"):
+        assert "recording_download" in _keys(build_permission_groups({}, org_type))
+    assert "recording_download.view" in SUPERUSER
+    assert "recording_download.view" in PHONE_TEMPLATES["Owner"]
+    assert "recording_download.view" in CARRIER_TEMPLATES["Superuser"]
+
+
 def test_phone_templates_stay_inside_phone_resources():
     for template in PHONE_TEMPLATES.values():
         assert {key.split(".")[0] for key in template} <= PHONE_RESOURCES
