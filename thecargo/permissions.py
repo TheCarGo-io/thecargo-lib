@@ -49,6 +49,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "payment_method",
     "credit_card",
     "conversation",
+    "recording_download",
     "sip_credential",
     "power_dialer",
     "telephony",
@@ -87,6 +88,7 @@ RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     "thecargo_mail": ("create",),
     "report": ("view", "create"),
     "integrations": ("view", "update"),
+    "recording_download": ("view",),
 }
 
 
@@ -99,6 +101,7 @@ PHONE_RESOURCES: Final[frozenset[str]] = frozenset(
         "subscription",
         "analytics",
         "conversation",
+        "recording_download",
         "template",
         "campaign",
         "notification",
@@ -131,6 +134,7 @@ CARRIER_RESOURCES: Final[frozenset[str]] = frozenset(
         "contact",
         "wallet",
         "conversation",
+        "recording_download",
         "template",
         "campaign",
         "notification",
@@ -222,6 +226,7 @@ GROUPS: Final[list[dict]] = [
             {"key": "notification", "label": "Notifications"},
             {"key": "template", "label": "Templates"},
             {"key": "conversation", "label": "Conversations"},
+            {"key": "recording_download", "label": "Download recordings"},
             {"key": "campaign", "label": "Campaigns"},
             {"key": "sip_credential", "label": "SIP Credentials"},
             {"key": "power_dialer", "label": "Power Dialer"},
