@@ -12,6 +12,8 @@ from thecargo.permissions import (
     CARRIER_RESOURCES,
     PHONE_RESOURCES,
     RESOURCE_SET,
+    STAGES,
+    actions_for,
     build_permission_groups,
     resources_for,
 )
@@ -172,6 +174,22 @@ def test_recording_download_is_offered_to_every_kind_of_organization():
     assert "recording_download.view" in SUPERUSER
     assert "recording_download.view" in PHONE_TEMPLATES["Owner"]
     assert "recording_download.view" in CARRIER_TEMPLATES["Superuser"]
+
+
+def test_reassign_is_offered_to_brokers_only_and_means_update():
+    assert "reassign" in _keys(build_permission_groups({}, None))
+    for org_type in ("phone", "carrier"):
+        assert "reassign" not in _keys(build_permission_groups({}, org_type))
+    assert actions_for("reassign") == ("update",)
+    assert "reassign" in FEATURES["os"].resources
+
+
+def test_a_template_reassigns_as_widely_as_it_edits_any_stage():
+    rank = {"own": 1, "team": 2, "all": 3}
+    for name, template in TEMPLATES.items():
+        stage_scopes = [template[f"{stage}.update"] for stage in STAGES if f"{stage}.update" in template]
+        widest = max(stage_scopes, key=rank.__getitem__) if stage_scopes else None
+        assert template.get("reassign.update") == widest, name
 
 
 def test_phone_templates_stay_inside_phone_resources():
