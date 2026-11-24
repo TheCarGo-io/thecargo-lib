@@ -53,6 +53,7 @@ MANAGER: Final[dict[str, str]] = {
         for r in ("shipment", "lead", "quote", "order", "customer", "task", "contract")
         for a in ("create", "update")
     },
+    "reassign.update": "own",
     **{f"{r}.{a}": "all" for r in ("automation", "distribution", "template") for a in ("view", "create", "update")},
     **{f"tag.{a}": "all" for a in ("view", "create", "update", "delete")},
     "team.view": "all",
@@ -82,6 +83,7 @@ SALES_AGENT: Final[dict[str, str]] = {
     **{f"{r}.view": "own" for r in ("lead", "quote", "order", "customer", "task", "contract", "order_feedback")},
     **{f"{r}.create": "all" for r in ("lead", "quote", "customer", "task")},
     **{f"{r}.update": "own" for r in ("lead", "quote", "customer", "task")},
+    "reassign.update": "own",
     "carrier.view": "all",
     "provider.view": "all",
     "tag.view": "all",
@@ -109,6 +111,7 @@ DISPATCHER: Final[dict[str, str]] = {
     "shipment.view": "all",
     **{f"{r}.view": "all" for r in ("lead", "quote")},
     **{f"order.{a}": "all" for a in ("view", "create", "update")},
+    "reassign.update": "all",
     "order_feedback.view": "all",
     "order_feedback.create": "all",
     "order_feedback.update": "all",

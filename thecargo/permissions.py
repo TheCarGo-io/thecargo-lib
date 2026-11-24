@@ -25,6 +25,7 @@ RESOURCES: Final[tuple[str, ...]] = (
     "lead",
     "quote",
     "order",
+    "reassign",
     "customer",
     "carrier",
     "task",
@@ -89,6 +90,7 @@ RESOURCE_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     "report": ("view", "create"),
     "integrations": ("view", "update"),
     "recording_download": ("view",),
+    "reassign": ("update",),
 }
 
 
@@ -187,6 +189,7 @@ GROUPS: Final[list[dict]] = [
                     {"key": "order", "label": "Orders"},
                 ],
             },
+            {"key": "reassign", "label": "Reassign owner"},
             {"key": "customer", "label": "Customers"},
             {"key": "contract", "label": "Contracts"},
             {"key": "tag", "label": "Tags"},

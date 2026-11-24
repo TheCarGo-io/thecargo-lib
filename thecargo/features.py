@@ -57,6 +57,7 @@ FEATURES: Final[dict[str, Feature]] = {
                 "lead",
                 "quote",
                 "order",
+                "reassign",
                 "customer",
                 "carrier",
                 "task",
